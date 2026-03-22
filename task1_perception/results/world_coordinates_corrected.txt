@@ -1,0 +1,4 @@
+Detected objects at pixel coordinates: [(81, 138), (115, 115), (119, 83)]
+World coordinates for pixel (81, 138): [-0.02972632 -0.02493175 -1.2545924 ]
+World coordinates for pixel (115, 115): [ 0.00288169 -0.00288169 -1.25675068]
+World coordinates for pixel (119, 83): [ 0.00669081  0.02771907 -1.25055829]

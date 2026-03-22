@@ -1,0 +1,12 @@
+# Core simulation
+pybullet>=3.2.6
+# pybullet_data is bundled inside the pybullet package (no separate install needed)
+
+# Numerics
+numpy>=1.24.0
+
+# Computer vision
+opencv-python>=4.8.0
+
+# Optional: nicer array/image debugging
+matplotlib>=3.7.0

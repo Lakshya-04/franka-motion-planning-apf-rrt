@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# CMake / C++ build
+task3_haptic_pid/build/
+
+# VS Code
+.vscode/

@@ -1,0 +1,41 @@
+[MASTER]
+# pybullet and cv2 are C extensions — allow runtime introspection
+extension-pkg-allow-list=pybullet,cv2
+
+[TYPECHECK]
+# cv2 members are generated at import time and are not visible to static analysis
+generated-members=cv2.*
+
+[MESSAGES CONTROL]
+disable=
+    c-extension-no-member,
+    # Scientific / robotics functions legitimately have many parameters and locals
+    too-many-arguments,
+    too-many-locals,
+    too-many-branches,
+    too-many-statements,
+    # Classes with many state fields are normal in control/planning code
+    too-many-instance-attributes,
+    # Single-method helper classes (e.g. Node dataclass) are fine
+    too-few-public-methods,
+    # Static-analysis false positive for numpy return shapes
+    too-many-function-args
+
+[FORMAT]
+max-line-length=100
+
+[BASIC]
+# Short names that are standard mathematical / robotics notation
+good-names=
+    i,j,k,n,
+    x,y,z,q,t,s,d,
+    w,h,v,u,f,e,
+    ax,r,c,J,M,
+    lo,hi,up,
+    px,py,cx,cy,fj,
+    xs,ys,zs,
+    q1,q2,p1,p2,
+    sl,qr,
+    r1,r2,c1,c2,
+    t0,x0,x1,y0,y1,
+    K,D,dt,lp,_
