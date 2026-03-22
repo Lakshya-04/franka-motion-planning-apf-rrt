@@ -217,15 +217,17 @@ class RobotController:
         grasp_orn = p.getQuaternionFromEuler([math.pi, 0.0, 0.0])
         ws = self._ws
 
-        # Shape-specific finger gap and descend offset
-        if shape == "cylinder":
-            finger_target = self._rc.gripper_open * 0.65   # medium grip
-            descend_bias = -0.005                           # go a bit lower
-        elif shape == "sphere":
-            finger_target = self._rc.gripper_open * 0.60   # similar to cylinder
-            descend_bias = 0.005                            # sphere sits rounder, go less low
+        # Shape-specific finger gap and descend offset.
+        # Cylinder/sphere: close fully and let physics contact stop the fingers
+        # at the object surface (force-limited close = natural compliance).
+        # A higher grasp force is used to resist the object weight during lift.
+        if shape in ("cylinder", "sphere"):
+            finger_target = 0.0          # drive fingers closed until contact
+            grasp_f = self._rc.grasp_force * 2.5  # clamp harder on round surfaces
+            descend_bias = 0.008         # grip slightly above table so fingers wrap object body
         else:  # box
             finger_target = self._rc.gripper_closed
+            grasp_f = self._rc.grasp_force
             descend_bias = 0.0
 
         print(f"    [Grasp] Opening gripper (shape={shape}) …")
@@ -241,12 +243,13 @@ class RobotController:
         print(f"    [Grasp] Descending to z = {grasp_pos[2]:.3f} m …")
         self.move_ee_to(grasp_pos, grasp_orn, n_steps=160)
 
-        print(f"    [Grasp] Closing gripper to {finger_target*100:.1f}% …")
+        gap_mm = finger_target * 1000
+        print(f"    [Grasp] Closing gripper (target gap={gap_mm:.1f} mm, force={grasp_f:.0f} N) …")
         half = finger_target / 2.0
         for fj in self._rc.finger_joints:
             p.setJointMotorControl2(
                 self._robot, fj, p.POSITION_CONTROL,
-                targetPosition=half, force=self._rc.grasp_force,
+                targetPosition=half, force=grasp_f,
                 maxVelocity=self._rc.finger_vel,
             )
         for _ in range(120):
@@ -254,11 +257,11 @@ class RobotController:
             if self._use_gui:
                 time.sleep(1.0 / self._sc.sim_hz)
 
-        # Keep gripper active throughout the lift
+        # Keep gripper clamped hard throughout the lift
         for fj in self._rc.finger_joints:
             p.setJointMotorControl2(
                 self._robot, fj, p.POSITION_CONTROL,
-                targetPosition=half, force=self._rc.grasp_force, maxVelocity=0.1,
+                targetPosition=half, force=grasp_f, maxVelocity=0.05,
             )
 
         lift_pos = [float(target_xyz[0]), float(target_xyz[1]),

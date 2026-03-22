@@ -159,7 +159,7 @@ class SceneManager:
         random.shuffle(shape_sequence)
 
         for shape in shape_sequence:
-            size = random.uniform(0.015, 0.028)
+            size = random.uniform(0.018, 0.028)
             pos_x = random.uniform(table_cx - 0.18, table_cx + 0.18)
             pos_y = random.uniform(-half_y + 0.05, half_y - 0.05)
 

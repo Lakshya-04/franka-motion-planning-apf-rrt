@@ -85,6 +85,15 @@ class ShapeClassifier:
     ) -> str:
         """Return "box", "cylinder", or "sphere" for the given contour.
 
+        Classification order
+        --------------------
+        1. Depth-variance check first: a sphere's curved top produces
+           significant depth variation even when its small projected size
+           makes the contour look less circular.  This catches small spheres
+           that would otherwise be mis-labelled as boxes by a circularity cut.
+        2. Circularity check: distinguishes cylinder (high circularity, flat
+           depth) from box (lower circularity after the sphere gate).
+
         Args:
             contour  : OpenCV contour array (N×1×2 int32).
             depth_img: Full-frame depth buffer float32 H×W, values in [0, 1].
@@ -96,19 +105,20 @@ class ShapeClassifier:
         if perimeter < 1e-6 or area < 1.0:
             return "box"
 
-        circularity = 4.0 * math.pi * area / (perimeter * perimeter)
-
-        if circularity < self.ROUND_THRESH:
-            return "box"
-
-        # Round shape — distinguish cylinder (flat top) from sphere (curved top)
-        # by computing depth variance inside the contour mask.
+        # -- Depth variance (sphere gate, evaluated before circularity) ------
         mask = np.zeros((img_h, img_w), dtype=np.uint8)
         cv2.drawContours(mask, [contour], -1, 255, cv2.FILLED)
         depth_vals = depth_img[mask > 0]
         depth_var = float(np.var(depth_vals)) if len(depth_vals) > 3 else 0.0
 
-        return "sphere" if depth_var >= self.SPHERE_VAR_THRESH else "cylinder"
+        # Sphere: curved top → high depth variance regardless of projected size.
+        # Box/cylinder tops are flat → depth_var ≈ 0 (< 1e-9).
+        if depth_var >= self.SPHERE_VAR_THRESH:
+            return "sphere"
+
+        # -- Circularity: cylinder vs box ------------------------------------
+        circularity = 4.0 * math.pi * area / (perimeter * perimeter)
+        return "cylinder" if circularity >= self.ROUND_THRESH else "box"
 
 
 class ObjectDetector:
