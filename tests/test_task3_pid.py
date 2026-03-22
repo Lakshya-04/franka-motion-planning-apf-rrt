@@ -175,57 +175,68 @@ def main():
     t_aw, sp_aw, pos_aw, out_aw, int_aw = run_sim(anti_windup=True)
     t_lpf, d_raw, d_filt = run_lpf_demo()
 
-    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
-    fig.suptitle("Task 3 — Haptic Dial PID Validation", fontsize=14, fontweight="bold")
+    plt.style.use("seaborn-v0_8-whitegrid")
+    fig, axes = plt.subplots(2, 3, figsize=(16, 9))
+    fig.suptitle("Task 3 — Haptic Dial PID Validation", fontsize=15, fontweight="bold")
 
-    shade_kw = dict(alpha=0.12, color="red")
+    shade_kw = dict(alpha=0.15, color="#E74C3C")
+    col_sp   = "#2C3E50"   # setpoint — dark charcoal dashed
+    col_pos  = "#2980B9"   # position — blue
+    col_int  = "#27AE60"   # integral  — green
+    col_out  = "#E67E22"   # output    — orange
 
-    for col, (t, sp, pos, out, integral, title) in enumerate([
-        (t_no, sp_no, pos_no, out_no, int_no, "WITHOUT anti-windup"),
-        (t_aw, sp_aw, pos_aw, out_aw, int_aw, "WITH anti-windup (clamping)"),
+    for col, (t, sp, pos, out, integral, panel_title) in enumerate([
+        (t_no, sp_no, pos_no, out_no, int_no, "WITHOUT Anti-Windup"),
+        (t_aw, sp_aw, pos_aw, out_aw, int_aw, "WITH Anti-Windup (clamping)"),
     ]):
         ax_pos = axes[0, col]
         ax_int = axes[1, col]
 
-        ax_pos.plot(t, sp, "k--", lw=1.2, label="setpoint")
-        ax_pos.plot(t, pos, "b", lw=1.5, label="position")
-        ax_pos.axvspan(2.0, 3.0, **shade_kw, label="at end-stop")
-        ax_pos.set_title(title, fontsize=11)
-        ax_pos.set_ylabel("angle (rad)")
-        ax_pos.legend(fontsize=8)
+        ax_pos.axvspan(2.0, 3.0, **shade_kw, label="at end-stop", zorder=1)
+        ax_pos.plot(t, sp,  "--", color=col_sp,  lw=1.4, label="setpoint",  zorder=3)
+        ax_pos.plot(t, pos, "-",  color=col_pos, lw=2.0, label="position",  zorder=4)
+        ax_pos.set_title(panel_title, fontsize=12, fontweight="bold", pad=8)
+        ax_pos.set_ylabel("angle (rad)", fontsize=10)
+        ax_pos.legend(fontsize=9, loc="upper left")
         ax_pos.set_xlim(0, 4)
-        ax_pos.grid(True, alpha=0.3)
+        ax_pos.spines["top"].set_visible(False)
+        ax_pos.spines["right"].set_visible(False)
 
-        ax_int.plot(t, integral, "g", lw=1.5, label="integral term")
-        ax_int.plot(t, out, "r", lw=1.0, alpha=0.6, label="output")
-        ax_int.axvspan(2.0, 3.0, **shade_kw, label="at end-stop")
-        ax_int.set_xlabel("time (s)")
-        ax_int.set_ylabel("value")
+        ax_int.axvspan(2.0, 3.0, **shade_kw, label="at end-stop", zorder=1)
+        ax_int.plot(t, integral, "-", color=col_int, lw=2.0, label="integral term", zorder=3)
+        ax_int.plot(t, out,      "-", color=col_out, lw=1.4, alpha=0.8,
+                    label="output", zorder=4)
+        ax_int.set_xlabel("time (s)", fontsize=10)
+        ax_int.set_ylabel("value", fontsize=10)
         ax_int.set_xlim(0, 4)
-        ax_int.legend(fontsize=8)
-        ax_int.grid(True, alpha=0.3)
+        ax_int.legend(fontsize=9, loc="upper left")
+        ax_int.spines["top"].set_visible(False)
+        ax_int.spines["right"].set_visible(False)
 
-    ax_lpf_raw = axes[0, 2]
+    ax_lpf_raw  = axes[0, 2]
     ax_lpf_filt = axes[1, 2]
 
-    ax_lpf_raw.plot(t_lpf, d_raw, "r", lw=0.8, alpha=0.7)
-    ax_lpf_raw.set_title("D-term: raw (unfiltered)", fontsize=11)
-    ax_lpf_raw.set_ylabel("d/dt measured")
+    ax_lpf_raw.plot(t_lpf, d_raw, color="#E74C3C", lw=0.9, alpha=0.75)
+    ax_lpf_raw.set_title("D-term: Raw (unfiltered)", fontsize=12, fontweight="bold", pad=8)
+    ax_lpf_raw.set_ylabel("d/dt measured", fontsize=10)
     ax_lpf_raw.set_ylim(-300, 300)
-    ax_lpf_raw.grid(True, alpha=0.3)
+    ax_lpf_raw.spines["top"].set_visible(False)
+    ax_lpf_raw.spines["right"].set_visible(False)
 
-    ax_lpf_filt.plot(t_lpf, d_filt, "b", lw=1.5)
-    ax_lpf_filt.set_title("D-term: after 50 Hz LPF", fontsize=11)
-    ax_lpf_filt.set_xlabel("time (s)")
-    ax_lpf_filt.set_ylabel("d/dt measured")
+    ax_lpf_filt.plot(t_lpf, d_filt, color="#2980B9", lw=2.0)
+    ax_lpf_filt.set_title("D-term: After 50 Hz LPF", fontsize=12, fontweight="bold", pad=8)
+    ax_lpf_filt.set_xlabel("time (s)", fontsize=10)
+    ax_lpf_filt.set_ylabel("d/dt measured", fontsize=10)
     ax_lpf_filt.set_ylim(-300, 300)
-    ax_lpf_filt.grid(True, alpha=0.3)
+    ax_lpf_filt.spines["top"].set_visible(False)
+    ax_lpf_filt.spines["right"].set_visible(False)
 
-    plt.tight_layout()
+    plt.tight_layout(pad=1.8)
     out_path = RESULTS_DIR / "test_task3_pid.png"
-    plt.savefig(out_path, dpi=120)
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
     print(f"Saved → {out_path}")
     plt.close(fig)
+    plt.style.use("default")
 
 
 if __name__ == "__main__":

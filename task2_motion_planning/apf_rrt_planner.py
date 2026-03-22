@@ -846,85 +846,92 @@ def visualise_tree_and_path(
     path: Optional[List[np.ndarray]],
     title: str,
     save_path: str,
+    smooth_path: Optional[List[np.ndarray]] = None,
 ) -> None:
     """
-    Plots the RRT tree (EE positions) and the final path in 3-D world space.
-    Saves the figure to save_path.
+    Three-projection visualisation (Top XY / Front XZ / Side YZ).
+
+    If `smooth_path` is provided both the raw RRT path and the
+    shortcut+PSO smooth path are overlaid in the same figure using
+    different colours, so the quality improvement is immediately visible.
     """
-    fig = plt.figure(figsize=(9, 7))
-    if _HAS_3D:
-        ax = fig.add_subplot(111, projection="3d")
-    else:
-        ax = fig.add_subplot(111)
-        ax.set_xlabel("X (m)")
-        ax.set_ylabel("Z (m)")
-        ax.set_title(title + " [2D fallback — X vs Z]")
+    # ── Pre-compute EE positions ────────────────────────────────────────
+    node_pts   = np.array([env.get_ee_position(n.q) for n in planner.tree])
+    raw_pts    = (np.array([env.get_ee_position(q) for q in path])
+                  if path else None)
+    smooth_pts = (np.array([env.get_ee_position(q) for q in smooth_path])
+                  if smooth_path else None)
 
-    # Draw tree edges (grey)
-    for node in planner.tree[1:]:
-        if node.parent is not None:
-            q1 = planner.tree[node.parent].q
-            q2 = node.q
-            p1 = env.get_ee_position(q1)
-            p2 = env.get_ee_position(q2)
-            if _HAS_3D:
-                ax.plot(
-                    [p1[0], p2[0]],
-                    [p1[1], p2[1]],
-                    [p1[2], p2[2]],
-                    "b-",
-                    alpha=0.15,
-                    linewidth=0.6,
-                )
-            else:
-                ax.plot([p1[0], p2[0]], [p1[2], p2[2]], "b-", alpha=0.15, lw=0.6)
+    projections = [
+        (0, 1, "X (m)", "Y (m)", "Top view  (XY)"),
+        (0, 2, "X (m)", "Z (m)", "Front view (XZ)"),
+        (1, 2, "Y (m)", "Z (m)", "Side view  (YZ)"),
+    ]
 
-    # Draw obstacles
-    for centre, radius in OBSTACLES:
-        if _HAS_3D:
-            u = np.linspace(0, 2 * math.pi, 20)
-            v = np.linspace(0, math.pi, 20)
-            xs = radius * np.outer(np.cos(u), np.sin(v)) + centre[0]
-            ys = radius * np.outer(np.sin(u), np.sin(v)) + centre[1]
-            zs = radius * np.outer(np.ones_like(u), np.cos(v)) + centre[2]
-            ax.plot_surface(xs, ys, zs, color="salmon", alpha=0.3)
-        else:
-            c2d = plt.Circle((centre[0], centre[2]), radius, color="salmon", alpha=0.4)
-            ax.add_patch(c2d)
+    plt.style.use("seaborn-v0_8-whitegrid")
+    fig, axes = plt.subplots(1, 3, figsize=(18, 6))
+    fig.suptitle(title, fontsize=14, fontweight="bold", y=1.02)
 
-    # Draw path
-    if path:
-        pts = np.array([env.get_ee_position(q) for q in path])
-        if _HAS_3D:
-            ax.plot(
-                pts[:, 0],
-                pts[:, 1],
-                pts[:, 2],
-                "g-o",
-                linewidth=2.5,
-                markersize=4,
-                label="Path",
-            )
-            ax.scatter(*pts[0], color="lime", s=60, zorder=5, label="Start")
-            ax.scatter(*pts[-1], color="red", s=60, zorder=5, label="Goal")
-        else:
-            ax.plot(pts[:, 0], pts[:, 2], "g-o", lw=2.5, ms=4, label="Path")
-            ax.scatter(
-                pts[0, 0], pts[0, 2], color="lime", s=60, zorder=5, label="Start"
-            )
-            ax.scatter(
-                pts[-1, 0], pts[-1, 2], color="red", s=60, zorder=5, label="Goal"
-            )
+    for ax, (xi, zi, xlabel, ylabel, view_label) in zip(axes, projections):
+        # Tree edges
+        for i, node in enumerate(planner.tree[1:], start=1):
+            if node.parent is not None:
+                p1 = node_pts[node.parent]
+                p2 = node_pts[i]
+                ax.plot([p1[xi], p2[xi]], [p1[zi], p2[zi]],
+                        color="#7BA7D4", alpha=0.25, lw=0.8, zorder=1)
 
-    ax.set_xlabel("X (m)")
-    ax.set_ylabel("Y (m)" if _HAS_3D else "Z (m)")
-    if _HAS_3D:
-        ax.set_zlabel("Z (m)")
-    ax.set_title(title)
-    ax.legend()
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=120)
+        # Obstacles
+        for centre, radius in OBSTACLES:
+            ax.add_patch(plt.Circle((centre[xi], centre[zi]), radius,
+                                    color="#E8715A", alpha=0.28, zorder=2))
+            ax.add_patch(plt.Circle((centre[xi], centre[zi]), radius,
+                                    fill=False, edgecolor="#C0392B",
+                                    lw=1.8, zorder=3))
+
+        # Raw RRT path — orange dashed
+        if raw_pts is not None:
+            ax.plot(raw_pts[:, xi], raw_pts[:, zi],
+                    "--o", color="#E67E22", lw=1.8, ms=4, alpha=0.75,
+                    zorder=4, label="Raw RRT path")
+
+        # Smooth path — solid green (drawn on top)
+        if smooth_pts is not None:
+            ax.plot(smooth_pts[:, xi], smooth_pts[:, zi],
+                    "-o", color="#27AE60", lw=2.8, ms=6,
+                    zorder=5, label="Shortcut + PSO path")
+
+        # Start / goal markers (use whichever path is available)
+        ref_pts = smooth_pts if smooth_pts is not None else raw_pts
+        if ref_pts is not None:
+            ax.scatter(ref_pts[0, xi], ref_pts[0, zi],
+                       color="#1ABC9C", s=150, zorder=7,
+                       edgecolors="white", lw=1.5, label="Start")
+            ax.scatter(ref_pts[-1, xi], ref_pts[-1, zi],
+                       color="#E74C3C", s=150, zorder=7,
+                       edgecolors="white", lw=1.5, label="Goal")
+
+        ax.set_xlabel(xlabel, fontsize=11)
+        ax.set_ylabel(ylabel, fontsize=11)
+        ax.set_title(view_label, fontsize=11, fontweight="bold")
+        ax.set_aspect("equal", adjustable="datalim")
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+        ax.legend(fontsize=8, loc="upper right")
+
+    # Stats header on first panel
+    n_nodes  = len(planner.tree)
+    raw_len  = RRTPlanner.path_length(path)   if path        else float("nan")
+    sm_len   = RRTPlanner.path_length(smooth_path) if smooth_path else float("nan")
+    stat_str = (f"nodes={n_nodes}  raw={raw_len:.2f} rad"
+                + (f"  →  smooth={sm_len:.2f} rad" if smooth_path else "")
+                + f"  t={planner.stats.get('time', 0):.2f}s")
+    axes[0].set_title(f"Top view (XY)\n{stat_str}", fontsize=9, fontweight="bold")
+
+    plt.tight_layout(pad=1.5)
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
+    plt.style.use("default")
     print(f"  Saved visualisation → {save_path}")
 
 
@@ -988,23 +995,27 @@ def run_demo(env: RobotEnv, use_gui: bool = False) -> None:
         f"length = {s['path_length']:.3f}, time = {s['time']:.2f} s"
     )
 
-    # PSO smoothing
+    # Shortcut + PSO smoothing
+    sc_path = planner.shortcut_path(path)
     smoother = PSOPathSmoother(env, n_particles=20, n_iter=80)
-    smooth_path = smoother.smooth(path)
+    smooth_path = smoother.smooth(sc_path)
     smooth_len = RRTPlanner.path_length(smooth_path)
     print(
-        f"  Smooth path: {len(smooth_path)} waypoints, "
+        f"  After shortcut: {len(sc_path)} waypoints, "
+        f"length = {RRTPlanner.path_length(sc_path):.3f}"
+    )
+    print(
+        f"  Smooth path:    {len(smooth_path)} waypoints, "
         f"length = {smooth_len:.3f}  "
         f"(reduction {100*(1-smooth_len/s['path_length']):.1f} %)"
     )
 
+    # Combined figure: raw path (orange dashed) + smooth path (green solid)
     visualise_tree_and_path(
-        env, planner, path, "APF-RRT Raw Path",
-        str(_RESULTS_DIR / "apf_rrt_raw.png"),
-    )
-    visualise_tree_and_path(
-        env, planner, smooth_path, "APF-RRT + PSO Smooth Path",
+        env, planner, path,
+        "APF-RRT — Raw Path vs Shortcut + PSO Smooth Path",
         str(_RESULTS_DIR / "apf_rrt_smooth.png"),
+        smooth_path=smooth_path,
     )
 
     if use_gui:

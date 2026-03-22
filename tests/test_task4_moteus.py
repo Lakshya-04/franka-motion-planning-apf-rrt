@@ -195,64 +195,78 @@ def plot_summary(telemetry):
     cur = np.array([r["current"] for r in telemetry])
     ph = np.array([r["phase"] for r in telemetry])
 
-    fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
-    fig.suptitle("Task 4 — moteus Actuator Validation", fontsize=13, fontweight="bold")
+    plt.style.use("seaborn-v0_8-whitegrid")
+    fig, axes = plt.subplots(3, 1, figsize=(14, 9), sharex=True)
+    fig.suptitle("Task 4 — moteus High-Speed Reciprocating Actuator Validation",
+                 fontsize=14, fontweight="bold")
 
-    colours = {
-        "homing": "#ffdddd",
-        "retract": "#ffffcc",
-        "cyclic": "#ddeeff",
-        "dwell": "#eeffee",
+    phase_colours = {
+        "homing":  "#FADBD8",
+        "retract": "#FEF9E7",
+        "cyclic":  "#D6EAF8",
+        "dwell":   "#D5F5E3",
     }
-    for ax in axes:
-        for phase, colour in colours.items():
+    phase_labels = {
+        "homing":  "Phase 1: Homing",
+        "retract": "Retract",
+        "cyclic":  "Phase 2: Cyclic",
+        "dwell":   "Dwell",
+    }
+
+    def _shade_phases(ax):
+        for phase, colour in phase_colours.items():
             mask = ph == phase
             if not mask.any():
                 continue
             idx = np.where(mask)[0]
-            starts = [idx[0]]
-            ends = []
+            starts, ends = [idx[0]], []
             for j in range(1, len(idx)):
                 if idx[j] - idx[j - 1] > 1:
                     ends.append(idx[j - 1])
                     starts.append(idx[j])
             ends.append(idx[-1])
             for s, e in zip(starts, ends):
-                ax.axvspan(t[s], t[e], color=colour, alpha=0.5)
+                ax.axvspan(t[s], t[e], color=colour, alpha=0.6, zorder=1)
 
-    axes[0].plot(t, tgt, "k--", lw=1, label="target (rev)")
-    axes[0].plot(t, pos, "b", lw=1.5, label="actual (rev)")
-    axes[0].set_ylabel("position (rev)")
-    axes[0].legend(fontsize=8)
-    axes[0].grid(True, alpha=0.3)
+    for ax in axes:
+        _shade_phases(ax)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
 
-    axes[1].plot(t, vel, "g", lw=1.2, label="velocity (rev/s)")
-    axes[1].axhline(VEL_LIMIT, color="r", lw=0.8, ls="--")
-    axes[1].axhline(-VEL_LIMIT, color="r", lw=0.8, ls="--",
-                    label=f"±{VEL_LIMIT} rev/s limit")
-    axes[1].set_ylabel("velocity (rev/s)")
-    axes[1].legend(fontsize=8)
-    axes[1].grid(True, alpha=0.3)
+    # Position panel
+    axes[0].plot(t, tgt, "--", color="#2C3E50", lw=1.2, label="Target (rev)", zorder=3)
+    axes[0].plot(t, pos, "-",  color="#2980B9", lw=2.0, label="Actual (rev)", zorder=4)
+    axes[0].set_ylabel("Position (rev)", fontsize=11)
 
-    axes[2].plot(t, cur, "r", lw=1.2, label="q_current (A)")
-    axes[2].axhline(STALL_THRESHOLD, color="k", lw=0.8, ls="--",
-                    label=f"stall threshold {STALL_THRESHOLD} A")
-    axes[2].set_ylabel("current (A)")
-    axes[2].set_xlabel("time (s)")
-    axes[2].legend(fontsize=8)
-    axes[2].grid(True, alpha=0.3)
+    # Build phase legend + line legend for top panel
+    phase_patches = [mpatches.Patch(color=c, label=phase_labels[ph_name], alpha=0.7)
+                     for ph_name, c in phase_colours.items()]
+    line_handles, line_labels = axes[0].get_legend_handles_labels()
+    axes[0].legend(handles=phase_patches + line_handles, fontsize=8,
+                   loc="upper right", ncol=2)
 
-    patches = [mpatches.Patch(color=c, label=ph_name, alpha=0.7)
-               for ph_name, c in colours.items()]
-    axes[0].legend(
-        handles=patches + axes[0].get_legend_handles_labels()[0], fontsize=8
-    )
+    # Velocity panel
+    axes[1].plot(t, vel, "-", color="#27AE60", lw=1.8, label="Velocity (rev/s)", zorder=3)
+    axes[1].axhline( VEL_LIMIT, color="#E74C3C", lw=1.2, ls="--", zorder=2)
+    axes[1].axhline(-VEL_LIMIT, color="#E74C3C", lw=1.2, ls="--",
+                    label=f"±{VEL_LIMIT} rev/s limit", zorder=2)
+    axes[1].set_ylabel("Velocity (rev/s)", fontsize=11)
+    axes[1].legend(fontsize=9, loc="upper right")
 
-    plt.tight_layout()
+    # Current panel
+    axes[2].plot(t, cur, "-", color="#E74C3C", lw=1.6, label="q_current (A)", zorder=3)
+    axes[2].axhline(STALL_THRESHOLD, color="#2C3E50", lw=1.2, ls="--",
+                    label=f"Stall threshold {STALL_THRESHOLD} A", zorder=2)
+    axes[2].set_ylabel("Current (A)", fontsize=11)
+    axes[2].set_xlabel("Time (s)", fontsize=11)
+    axes[2].legend(fontsize=9, loc="upper right")
+
+    plt.tight_layout(pad=1.5)
     out_path = RESULTS_DIR / "test_task4_moteus.png"
-    plt.savefig(out_path, dpi=120)
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
     print(f"Saved → {out_path}")
     plt.close(fig)
+    plt.style.use("default")
 
 
 # ---------------------------------------------------------------------------

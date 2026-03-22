@@ -385,44 +385,66 @@ def run_integration(n_runs: int = 5):
 
 
 def plot_summary(results, n_runs: int):
-    labels  = ["Vanilla\nRRT", "APF-RRT", "Bidir\nAPF-RRT", "Parallel\nPortfolio", "APF-RRT\n+PSO"]
+    plt.style.use("seaborn-v0_8-whitegrid")
+
+    labels  = ["Vanilla\nRRT", "APF-RRT", "Bidir\nAPF-RRT", "Parallel\nPortfolio", "Bidir+SC\n+PSO"]
     keys    = ["vanilla",      "apf",     "bidir",           "parallel",            "pso"]
-    colours = ["#5588cc",      "#ee8833", "#cc44aa",         "#cc3333",             "#55aa55"]
+    # Seaborn deep palette — colourblind-friendly
+    colours = ["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B2"]
 
     metrics = [
-        ("success",    "success rate (%)",        ".0f"),
-        ("length",     "avg path length (rad)",   ".2f"),
-        ("nodes",      "avg tree nodes",           ".0f"),
-        ("time",       "avg compute time (s)",    ".2f"),
-        ("smoothness", "avg max step (rad)",       ".3f"),
-        ("efficiency", "avg path efficiency",     ".2f"),
+        ("success",    "Success Rate (%)",         ".0f"),
+        ("length",     "Avg Path Length (rad)",    ".2f"),
+        ("nodes",      "Avg Tree Nodes",            ".0f"),
+        ("time",       "Avg Compute Time (s)",     ".2f"),
+        ("smoothness", "Avg Max Step (rad)",        ".3f"),
+        ("efficiency", "Avg Path Efficiency",      ".2f"),
     ]
 
-    fig, axes = plt.subplots(2, 3, figsize=(16, 9))
-    fig.suptitle(f"Task 2 — APF-Guided RRT Validation ({n_runs} runs, averages)",
-                 fontsize=13, fontweight="bold")
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    fig.suptitle(
+        f"Task 2 — APF-Guided RRT Motion Planner Validation  ({n_runs} runs)",
+        fontsize=15, fontweight="bold", y=1.01,
+    )
 
     for ax, (metric_key, ylabel, fmt) in zip(axes.flat, metrics):
         values = [results[k][metric_key] for k in keys]
         valid = [v for v in values if not np.isnan(v)]
-        top = max(valid) * 1.30 if valid and max(valid) > 0 else 1.0
-        bars = ax.bar(labels, values, color=colours, width=0.55)
-        ax.set_title(ylabel, fontsize=10)
-        ax.set_ylabel(ylabel, fontsize=9)
+        top = max(valid) * 1.28 if valid and max(valid) > 0 else 1.0
+
+        bars = ax.bar(labels, values, color=colours, width=0.52,
+                      edgecolor="white", linewidth=0.8, zorder=3)
+
+        ax.set_title(ylabel, fontsize=11, fontweight="bold", pad=10)
         ax.set_ylim(0, top)
+        ax.tick_params(axis="x", labelsize=9, pad=4)
+        ax.tick_params(axis="y", labelsize=9)
+        ax.spines["top"].set_visible(False)
+        ax.spines["right"].set_visible(False)
+
+        # Horizontal reference lines
+        if metric_key == "success":
+            ax.axhline(100, color="#888", lw=1.2, ls="--", alpha=0.6, zorder=2)
+        if metric_key == "efficiency":
+            ax.axhline(1.0, color="#888", lw=1.2, ls="--", alpha=0.6, zorder=2)
+
+        # Value labels above each bar
         for bar, val in zip(bars, values):
             label_txt = format(val, fmt) if not np.isnan(val) else "n/a"
-            ax.text(bar.get_x() + bar.get_width() / 2,
-                    bar.get_height() + top * 0.02,
-                    label_txt, ha="center", va="bottom", fontsize=8)
-        ax.grid(axis="y", alpha=0.3)
-        ax.tick_params(axis="x", labelsize=8)
+            ax.text(
+                bar.get_x() + bar.get_width() / 2,
+                bar.get_height() + top * 0.013,
+                label_txt,
+                ha="center", va="bottom", fontsize=9, fontweight="bold",
+                color="#222",
+            )
 
-    plt.tight_layout()
+    plt.tight_layout(pad=1.5)
     out_path = RESULTS_DIR / "test_task2_planner.png"
-    plt.savefig(out_path, dpi=120)
+    plt.savefig(out_path, dpi=150, bbox_inches="tight")
     print(f"Saved → {out_path}")
     plt.close(fig)
+    plt.style.use("default")
 
 
 # ---------------------------------------------------------------------------
