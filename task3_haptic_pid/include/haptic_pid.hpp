@@ -31,7 +31,7 @@
  *       first-order IIR low-pass filter on the derivative term.
  */
 class PID {
- public:
+public:
   /**
    * Construct and fully initialise a PID controller.
    *
@@ -43,8 +43,7 @@ class PID {
    * @param out_max        Upper output saturation limit  (e.g. +1.0).
    * @param lpf_cutoff_hz  Derivative low-pass cutoff [Hz]; 0 = bypass.
    */
-  PID(float kp, float ki, float kd, float dt,
-      float out_min, float out_max,
+  PID(float kp, float ki, float kd, float dt, float out_min, float out_max,
       float lpf_cutoff_hz = 0.0f);
 
   /**
@@ -56,23 +55,25 @@ class PID {
    */
   float update(float setpoint, float measured);
 
-  /** Reset integrator and derivative state (call when re-activating a stopped axis). */
+  /** Reset integrator and derivative state (call when re-activating a stopped
+   * axis). */
   void reset();
 
- private:
+private:
   // ── Tuning parameters ─────────────────────────────────────────────────────
   float kp_, ki_, kd_, dt_;
   float out_min_, out_max_;
   float lpf_alpha_;
 
   // ── Internal state (zero-initialised) ─────────────────────────────────────
-  float integral_   = 0.0f;
+  float integral_ = 0.0f;
   float prev_error_ = 0.0f;
   float d_filtered_ = 0.0f;
 };
 
 /**
- * Returns the nearest detent angle for a given number of detents per revolution.
+ * Returns the nearest detent angle for a given number of detents per
+ * revolution.
  *
  * @param angle_rad       Arbitrary angle [rad].
  * @param detents_per_rev Number of discrete click positions per revolution.

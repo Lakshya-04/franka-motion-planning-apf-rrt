@@ -13,8 +13,8 @@
 
 #include "haptic_pid.hpp"
 
-#include <algorithm>  // std::clamp
-#include <cmath>      // M_PI
+#include <algorithm> // std::clamp
+#include <cmath>     // M_PI
 
 // ===========================================================================
 // PID constructor
@@ -36,22 +36,18 @@
  * @note All integrator and derivative state members are zero-initialised in
  *       the class definition, so no explicit reset is needed at construction.
  */
-PID::PID(float kp, float ki, float kd, float dt,
-         float out_min, float out_max, float lpf_cutoff_hz)
-    : kp_(kp),
-      ki_(ki),
-      kd_(kd),
-      dt_(dt),
-      out_min_(out_min),
-      out_max_(out_max) {
+PID::PID(float kp, float ki, float kd, float dt, float out_min, float out_max,
+         float lpf_cutoff_hz)
+    : kp_(kp), ki_(ki), kd_(kd), dt_(dt), out_min_(out_min), out_max_(out_max) {
   if (lpf_cutoff_hz > 0.0f) {
     // τ = RC time constant of an equivalent continuous-time first-order filter.
     // Smaller τ (higher f_c) → alpha closer to 1 → less smoothing.
     const float tau = 1.0f / (2.0f * static_cast<float>(M_PI) * lpf_cutoff_hz);
-    // Bilinear-transform alpha: maps the continuous-time RC pole to discrete time.
+    // Bilinear-transform alpha: maps the continuous-time RC pole to discrete
+    // time.
     lpf_alpha_ = dt / (dt + tau);
   } else {
-    lpf_alpha_ = 1.0f;  // pass-through — d_filtered tracks d_raw exactly
+    lpf_alpha_ = 1.0f; // pass-through — d_filtered tracks d_raw exactly
   }
 }
 
@@ -66,7 +62,8 @@ PID::PID(float kp, float ki, float kd, float dt,
  * @details Execution order each cycle:
  *   1. Compute position error.
  *   2. Scale by Kp for the proportional term.
- *   3. Finite-difference the *error* (not setpoint) and pass through IIR filter.
+ *   3. Finite-difference the *error* (not setpoint) and pass through IIR
+ * filter.
  *   4. Sum P+D to determine the integrator's available headroom.
  *   5. Accumulate the integral and clamp it to that headroom (anti-windup).
  *   6. Apply a final hard clamp on total output as a floating-point safety net.
@@ -101,9 +98,8 @@ float PID::update(float setpoint, float measured) {
   //    At a hard-stop the output is saturated, so the integrator is frozen —
   //    no wind-up occurs and there is no torque lurch on release.
   const float i_candidate = integral_ + ki_ * error * dt_;
-  integral_ = std::clamp(i_candidate,
-                          out_min_ - output_pd,
-                          out_max_ - output_pd);
+  integral_ =
+      std::clamp(i_candidate, out_min_ - output_pd, out_max_ - output_pd);
 
   // 6. Total output — hard clamp as a safety net against floating-point drift.
   const float output = std::clamp(output_pd + integral_, out_min_, out_max_);
@@ -126,7 +122,7 @@ float PID::update(float setpoint, float measured) {
  *          torque transient on the first update() call after resumption.
  */
 void PID::reset() {
-  integral_   = 0.0f;  // discard accumulated integral wind-up
-  prev_error_ = 0.0f;  // prevent a spurious derivative spike on next update
-  d_filtered_ = 0.0f;  // flush the IIR filter memory
+  integral_ = 0.0f;   // discard accumulated integral wind-up
+  prev_error_ = 0.0f; // prevent a spurious derivative spike on next update
+  d_filtered_ = 0.0f; // flush the IIR filter memory
 }

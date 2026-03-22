@@ -440,8 +440,18 @@ class RRTPlanner:
         q_new = np.clip(q_new, JOINT_LOWER, JOINT_UPPER)
         return q_new
 
-    def _path_free(self, q1: np.ndarray, q2: np.ndarray, n_checks: int = 6) -> bool:
-        """Linearly interpolate and check n_checks+1 configurations."""
+    def _path_free(self, q1: np.ndarray, q2: np.ndarray, resolution: float = 0.05) -> bool:
+        """
+        Collision-free check along the straight-line segment q1 -> q2.
+
+        Number of intermediate samples scales with segment length so that
+        longer shortcuts (produced by repeated shortcutting passes) are
+        checked at the same spatial resolution as short RRT extensions.
+        With resolution=0.05 rad each check interval is smaller than the
+        smallest obstacle's apparent joint-space footprint.
+        """
+        dist = np.linalg.norm(q2 - q1)
+        n_checks = max(6, int(np.ceil(dist / resolution)))
         for i in range(n_checks + 1):
             t = i / n_checks
             q = q1 + t * (q2 - q1)
@@ -766,6 +776,15 @@ class PSOPathSmoother:
         # ── Reconstruct smooth path ───────────────────────────────────
         best_interm = gbest_pos.reshape(K, D)
         smooth_path = [start] + [best_interm[i] for i in range(K)] + [goal]
+
+        # ── Post-hoc safety check ─────────────────────────────────────
+        # Verify every segment of the PSO result with full resolution.
+        # If any segment clips an obstacle, fall back to the collision-free
+        # shortcutted input path (raw_path is already verified clean).
+        planner = RRTPlanner(self.env)
+        for i in range(len(smooth_path) - 1):
+            if not planner._path_free(smooth_path[i], smooth_path[i + 1]):
+                return raw_path
         return smooth_path
 
     # ------------------------------------------------------------------
@@ -777,7 +796,14 @@ class PSOPathSmoother:
             np.linalg.norm(waypoints[i + 1] - waypoints[i])
             for i in range(len(waypoints) - 1)
         )
-        collisions = sum(1 for q in waypoints[1:-1] if self.env.is_collision(q))
+        # Check midpoint of each segment — fast proxy that catches most obstacle
+        # penetrations without a full resolution sweep inside the PSO loop.
+        # The post-hoc safety check in smooth() catches any remaining cases.
+        collisions = 0
+        for i in range(len(waypoints) - 1):
+            q_mid = 0.5 * (waypoints[i] + waypoints[i + 1])
+            if self.env.is_collision(q_mid):
+                collisions += 1
         return length + self.w_coll * collisions
 
     @staticmethod
@@ -981,9 +1007,22 @@ def execute_path_gui(
 def run_demo(env: RobotEnv, use_gui: bool = False) -> None:
     """Run a single APF-RRT planning demo and optionally animate the result in the GUI."""
     print("\n── Demo: APF-RRT + PSO Smoothing ────────────────────────────")
+
+    # Clean up the viewport for recording
+    if use_gui:
+        p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)           # hide side panel
+        p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 1)
+        p.resetDebugVisualizerCamera(
+            cameraDistance=1.6,
+            cameraYaw=50,
+            cameraPitch=-25,
+            cameraTargetPosition=[0.3, 0.0, 0.5],
+        )
+
+    # Use bidirectional for guaranteed path in demo (100% success rate)
     apf = APFGradient(env)
-    planner = RRTPlanner(env, apf=apf, goal_bias=0.10, step_size=0.25)
-    path = planner.plan(Q_START, Q_GOAL)
+    planner = RRTPlanner(env, apf=apf, goal_bias=0.15, step_size=0.25)
+    path = planner.plan_bidirectional(Q_START, Q_GOAL)
 
     if path is None:
         print("  No path found in demo run.")
@@ -1028,18 +1067,23 @@ def run_demo(env: RobotEnv, use_gui: bool = False) -> None:
         )
         time.sleep(2.0)
         print("\n  Executing raw path in GUI …")
-        execute_path_gui(env, path, interp_steps=60)
+        execute_path_gui(env, path, interp_steps=80)
 
         p.removeUserDebugItem(lbl)
+        time.sleep(1.0)
+        # Return to start before showing smooth path
+        execute_path_gui(env, list(reversed(path)), interp_steps=80)
+        time.sleep(1.0)
+
         lbl2 = p.addUserDebugText(
-            f"PSO-SMOOTHED PATH  ({len(smooth_path)} waypoints)\nSame route, shorter & smoother",
+            f"SHORTCUT + PSO SMOOTH PATH  ({len(smooth_path)} waypoints)\nShorter, cleaner trajectory",
             [0.3, 0.5, 1.2],
             textColorRGB=[0, 1, 0.4],
             textSize=1.8,
         )
         time.sleep(2.0)
         print("  Executing smoothed path in GUI …")
-        execute_path_gui(env, smooth_path, interp_steps=60)
+        execute_path_gui(env, smooth_path, interp_steps=80)
         p.removeUserDebugItem(lbl2)
         print("  Path execution done.")
 

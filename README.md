@@ -9,6 +9,7 @@ Franka Panda robotics in PyBullet. Perception and pick-and-place, hybrid APF-gui
 ## Results
 
 ### Task 2: Motion Planner comparison (APF-RRT vs Vanilla RRT vs APF-RRT+PSO)
+![Task 2 simulation demo](task2_motion_planning/results/demo_motion_planning.gif)
 ![Task 2 planner validation](task2_motion_planning/results/apf_rrt_smooth.png)
 ![Task 2 metrics](tests/results/test_task2_planner.png)
 
@@ -167,7 +168,7 @@ python3 -m task1_perception.pipeline --headless
 | Goal-biased sampling | With probability `goal_bias` (default 15%, ramps to 40%), sample `q_goal` directly |
 | APF attractive force | `F_att = k_att · (q_rand − q_near)` in joint space |
 | APF repulsive force | Workspace force via `F_rep = k_rep·(1/d − 1/ρ₀)/d²·n̂`; mapped to joint torques with Jacobian-transpose `τ = Jᵀ·F` |
-| Collision checking | `p.getClosestPoints()` swept along the `q_near→q_new` chord (6 interpolated configurations) |
+| Collision checking | `p.getClosestPoints()` swept along the `q_near→q_new` chord with adaptive resolution (0.05 rad step, so longer segments get proportionally more samples) |
 | Bidirectional RRT-Connect | Dual-tree growth from start and goal, connects when trees come within `goal_tol` |
 | Parallel portfolio | N independent PyBullet processes each with own random seed, first success wins |
 
@@ -176,18 +177,35 @@ python3 -m task1_perception.pipeline --headless
 Particle Swarm Optimisation post-processes the raw RRT waypoints:
 - Greedy shortcutting pass removes redundant waypoints before PSO runs.
 - Each particle = flattened vector of all intermediate joint configurations.
-- Fitness = total joint-space path length + `w_coll` × number of colliding waypoints.
+- Fitness = total joint-space path length + `w_coll` × number of colliding segments (midpoint check per segment for speed).
+- Post-convergence safety pass verifies every segment with full resolution; falls back to the shortcutted path if any segment clips an obstacle.
 - After convergence, start and goal are re-attached unchanged.
+
+### Development methodology
+
+The planner evolved through four measurable steps:
+
+**Step 1: Vanilla RRT baseline**
+Standard RRT with uniform random sampling. 59% success rate over 100 runs — fails frequently because uniform sampling wastes effort in obstacle-free regions and the tree can grow away from the goal for many iterations.
+
+**Step 2: APF-guided RRT (Phase A)**
+Added attractive and repulsive potential field gradients to bias each tree extension. Counterintuitively this did not improve success rate (56%) — APF local minima cause the planner to stall near obstacles, and the repulsive force sometimes pushes extensions into joint limits. APF helps steer but introduces its own failure modes.
+
+**Step 3: Bidirectional RRT-Connect**
+Growing two trees simultaneously (start and goal) and connecting them when they come within `goal_tol` eliminates the one-sided search problem. Result: 100% success, 0.11 s average — but the raw paths are long (6.66 rad) because two independently grown trees connect at an arbitrary interior point with no smoothness guarantee.
+
+**Step 4: Greedy shortcutting + PSO (Phase B)**
+Greedy shortcutting iterates triplets and removes the middle waypoint whenever the direct segment is collision-free, collapsing 6.66 rad to roughly 3.5 rad before PSO runs. PSO then optimises the remaining intermediate waypoints against a fitness combining path length and a collision penalty. Final result: 100% success, 3.44 rad average (48% reduction vs raw bidir), 1.09 s total. The straight-line minimum between Q_START and Q_GOAL is approximately 2.86 rad, so the final paths reach 83% of the theoretical optimum while guaranteeing obstacle clearance.
 
 ### Comparative analysis (100 runs)
 
 | Planner | Success Rate | Avg Time (s) | Path Length (rad) | Avg Nodes |
 |---|---|---|---|---|
-| Vanilla RRT | 55% | 1.10 | 5.27 | 1495 |
-| APF-RRT | 62% | 2.65 | 5.76 | 1716 |
-| Bidir APF-RRT | 100% | 0.10 | 6.27 | 75 |
-| Parallel Portfolio | 100% | 0.29 | 5.29 | 46 |
-| Bidir + Shortcut + PSO | 100% | 0.76 | 2.91 | n/a |
+| Vanilla RRT | 59% | 1.48 | 6.04 | 1445 |
+| APF-RRT | 56% | 1.88 | 6.02 | 1865 |
+| Bidir APF-RRT | 100% | 0.11 | 6.66 | 85 |
+| Parallel Portfolio | 100% | 0.30 | 5.29 | 46 |
+| Bidir + Shortcut + PSO | 100% | 1.09 | 3.44 | n/a |
 
 ### Validate
 
@@ -236,6 +254,26 @@ First-order IIR on the D-term:
 `d_filtered[k] = α · d_raw[k] + (1−α) · d_filtered[k−1]`
 where `α = dt / (dt + 1/(2π f_c))`. Chosen cutoff: **50 Hz**.
 
+### Tuning report
+
+**First-run safety protocol**
+
+Before applying any gains to an unknown motor, the goal is to characterise the plant without risking a high-speed collision.
+
+1. **Set output limits to 5-10% of rated torque** (`out_min = -0.1`, `out_max = 0.1`). This caps force regardless of what the controller computes.
+2. **Zero K_i and K_d.** Start with proportional-only control so the integrator cannot wind up and the derivative cannot amplify noise during identification.
+3. **Increase K_p in small increments** (e.g. 0.1 steps) from zero. After each step apply a small step setpoint (5-10% of range) and observe: does the axis move toward the setpoint? Does it overshoot? Does it oscillate?
+4. **K_p is set to roughly half the value that causes sustained oscillation** (Ziegler-Nichols ultimate gain method). In this simulation: K_p = 3.5 (oscillation onset ~7.0).
+5. Once K_p is confirmed stable, gradually re-enable K_d (improves rise time and damps overshoot), then K_i (eliminates steady-state error). Re-verify at each stage.
+6. Only after all gains are tuned at low torque, raise output limits to operating range.
+
+**Why 50 Hz LPF cutoff on the D-term**
+
+The encoder runs at 1 kHz (dt = 1 ms). Differencing consecutive samples produces a signal with components up to 500 Hz (Nyquist). Mechanical vibration and electrical noise in the haptic dial typically appear above 100 Hz. A 50 Hz cutoff:
+- Attenuates noise above 100 Hz by > 20 dB (two octaves above cutoff).
+- Passes the meaningful derivative signal from human-speed hand motion (typically 0-20 Hz).
+- Bilinear-transform alpha: `α = dt / (dt + 1/(2π·50)) ≈ 0.239` at 1 kHz — stable and causal.
+
 ### Build and run
 
 ```bash
@@ -271,6 +309,16 @@ Three-phase asyncio script for the moteus SDK:
 
 **Phase 3: Telemetry**
 - Writes CSV: `timestamp_s`, `target_position_rev`, `actual_position_rev`, `velocity_rev_s`, `bus_voltage_V`, `temperature_C`, `q_current_A`, `mode`.
+
+### Backlash and overshoot handling during homing
+
+When the motor hits the physical hard-stop, the current spikes above `stall_threshold`. At that point two things are done before declaring Position 0:
+
+1. **Retract by 0.05 rev.** Driving into the stop under torque compresses any backlash in the drivetrain. Retracting immediately unloads the mechanical coupling and moves the motor to a position where the backlash gap is neither fully open nor fully closed. This gives consistent encoder readings on the first move away from the stop.
+
+2. **Zero the position reference at the retracted location** (not at the hard-stop itself). If Position 0 were set exactly at the wall, the first commanded move to 0.0 rev would immediately stall against it again. The 0.05 rev offset provides a small clearance buffer so the first cyclic sweep starts from free air.
+
+Overshoot during homing is bounded by the velocity profile: the motor approaches at only 0.1 rev/s (slow enough that the impulse on impact stays within `servo.max_current_A = 2.0 A`). On the cyclic trajectory, `accel_limit = 20 rev/s²` and `velocity_limit = 5 rev/s` are set in the controller; the moteus firmware enforces these independently of the host so a dropped watchdog packet cannot cause uncontrolled acceleration into the stop.
 
 ### Pre-configuration (one-time, via moteus_tool)
 

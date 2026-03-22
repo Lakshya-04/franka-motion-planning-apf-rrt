@@ -27,12 +27,12 @@
 
 int main() {
   // ── [1] Plant and simulation parameters ──────────────────────────────────
-  constexpr float kDt         = 0.001f;    // 1 kHz — typical embedded control rate
-  constexpr float kSimSeconds = 2.0f;      // total simulated time
-  constexpr int   kNSteps     = static_cast<int>(kSimSeconds / kDt);
-  constexpr int   kDetents    = 24;        // 24 clicks per revolution (common encoder)
-  constexpr float kMotorGain  = 6.0f;     // rad/s² per unit normalised output
-  constexpr float kBacklash   = 0.00873f; // 0.5° — typical gear-drive dead zone
+  constexpr float kDt = 0.001f;       // 1 kHz — typical embedded control rate
+  constexpr float kSimSeconds = 2.0f; // total simulated time
+  constexpr int kNSteps = static_cast<int>(kSimSeconds / kDt);
+  constexpr int kDetents = 24; // 24 clicks per revolution (common encoder)
+  constexpr float kMotorGain = 6.0f;    // rad/s² per unit normalised output
+  constexpr float kBacklash = 0.00873f; // 0.5° — typical gear-drive dead zone
 
   // ── [2] Controller — gains chosen by the first-run protocol (see §C) ─────
   // Kp=3.5 gives fast detent snap; Kd=0.12 damps overshoot; Ki=0.8 removes
@@ -49,19 +49,19 @@ int main() {
   const float step1 = nearest_detent(kTwoPi / kDetents * 2, kDetents);
   const float step2 = nearest_detent(kTwoPi / kDetents * 5, kDetents);
 
-  std::printf("Step 1 setpoint = %.4f rad (%.1f deg)\n",
-              step1, step1 * 180.0f / kTwoPi * 2.0f);
-  std::printf("Step 2 setpoint = %.4f rad (%.1f deg)\n",
-              step2, step2 * 180.0f / kTwoPi * 2.0f);
-  std::printf("\n%6s  %9s  %9s  %9s  %9s\n",
-              "t(ms)", "setpoint", "measured", "output", "error");
+  std::printf("Step 1 setpoint = %.4f rad (%.1f deg)\n", step1,
+              step1 * 180.0f / kTwoPi * 2.0f);
+  std::printf("Step 2 setpoint = %.4f rad (%.1f deg)\n", step2,
+              step2 * 180.0f / kTwoPi * 2.0f);
+  std::printf("\n%6s  %9s  %9s  %9s  %9s\n", "t(ms)", "setpoint", "measured",
+              "output", "error");
 
   // ── [4] Simulation loop ───────────────────────────────────────────────────
-  float true_pos = 0.0f;  // true mechanical position [rad]
-  float velocity = 0.0f;  // angular velocity [rad/s]
+  float true_pos = 0.0f; // true mechanical position [rad]
+  float velocity = 0.0f; // angular velocity [rad/s]
 
   for (int k = 0; k < kNSteps; ++k) {
-    const float t        = k * kDt;
+    const float t = k * kDt;
     // Step the setpoint at t=1 s to exercise a detent-to-detent transition.
     const float setpoint = (t < 1.0f) ? step1 : step2;
 
@@ -69,10 +69,12 @@ int main() {
     // the backlash gap, so the controller sees slightly less motion than
     // actually occurred.  In a real system this causes P and I to accumulate
     // "invisible" error, which the filtered D-term and anti-windup mitigate.
-    float measured       = true_pos;
-    const float lag      = true_pos - measured;
-    if (lag >  kBacklash / 2.0f) measured = true_pos - kBacklash / 2.0f;
-    if (lag < -kBacklash / 2.0f) measured = true_pos + kBacklash / 2.0f;
+    float measured = true_pos;
+    const float lag = true_pos - measured;
+    if (lag > kBacklash / 2.0f)
+      measured = true_pos - kBacklash / 2.0f;
+    if (lag < -kBacklash / 2.0f)
+      measured = true_pos + kBacklash / 2.0f;
 
     const float output = pid.update(setpoint, measured);
 
@@ -84,8 +86,8 @@ int main() {
 
     // Decimated print: every 50 steps = 50 ms to keep output readable.
     if (k % 50 == 0) {
-      std::printf("%6.0f  %9.4f  %9.4f  %9.4f  %9.4f\n",
-                  t * 1000.0f, setpoint, measured, output, setpoint - measured);
+      std::printf("%6.0f  %9.4f  %9.4f  %9.4f  %9.4f\n", t * 1000.0f, setpoint,
+                  measured, output, setpoint - measured);
     }
   }
 
