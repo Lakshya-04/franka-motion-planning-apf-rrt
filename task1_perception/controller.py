@@ -15,11 +15,18 @@ All parameters come from RobotConfig; no magic numbers are defined here.
 
 from __future__ import annotations
 
+from __future__ import annotations
+
 import math
 import time
+from typing import TYPE_CHECKING
 
+import cv2
 import numpy as np
 import pybullet as p
+
+if TYPE_CHECKING:
+    from .camera import WristCamera
 
 from .config import RobotConfig, SceneConfig, WorkspaceConfig
 
@@ -190,42 +197,75 @@ class RobotController:
     # Grasp sequence
     # ------------------------------------------------------------------
 
-    def grasp(self, target_xyz: np.ndarray, table_height: float,
-              shape: str = "box") -> bool:
+    # ------------------------------------------------------------------
+    # Wrist-camera helpers
+    # ------------------------------------------------------------------
+
+    def _object_visible(self, wrist_cam: WristCamera) -> bool:
+        """Return True if a vivid-coloured object blob is visible in the wrist camera.
+
+        Used for reactive verification: object might fall or roll between
+        the planning step and the actual grasp attempt.
         """
-        Execute a shape-aware 5-stage pick-and-place grasp sequence:
+        rgb, _, _ = wrist_cam.capture()
+        hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
+        # Same saturation/value gate as the overhead detector
+        mask = cv2.inRange(hsv, np.array([0, 80, 80]), np.array([180, 255, 255]))
+        return int(mask.sum()) > 200   # at least ~200 vivid pixels
 
-          1. Open gripper.
-          2. Approach — pre-grasp hover (target + pre_grasp_height above).
-          3. Descend  — lower EE to object centre (shape-adjusted height).
-          4. Grasp    — close gripper (finger gap tuned per shape class).
-          5. Lift     — raise object to lift_height.
+    def _grip_succeeded(self) -> bool:
+        """Return True if the fingers are NOT fully closed (something is gripped).
 
-        Shape-specific adjustments
-        --------------------------
-        box      : Standard parallel-jaw close; descend to cube centre.
-        cylinder : Wider finger gap (grip around cylindrical body); descend lower.
-        sphere   : Same gap as cylinder; descend slightly less (sphere sits higher).
+        After closing, if both fingers are essentially at 0 the gripper passed
+        through the object (missed or object fell) — abort the lift.
+        """
+        left  = p.getJointState(self._robot, self._rc.finger_joints[0])[0]
+        right = p.getJointState(self._robot, self._rc.finger_joints[1])[0]
+        gap = left + right   # total finger separation
+        return gap > 0.004   # > 4 mm separation means something is gripped
 
-        Args:
-            target_xyz  : World-frame position of the object centroid [m].
-            table_height: Z of the table surface [m].
-            shape       : Detected shape class ("box", "cylinder", or "sphere").
+    # ------------------------------------------------------------------
+    # Grasp sequence
+    # ------------------------------------------------------------------
 
-        Returns True on success (IK assumed to converge for in-workspace targets).
+    def grasp(
+        self,
+        target_xyz: np.ndarray,
+        table_height: float,
+        shape: str = "box",
+        wrist_cam: WristCamera | None = None,
+    ) -> bool:
+        """
+        Execute a shape-aware, wrist-camera-reactive pick-and-place sequence.
+
+        Stages
+        ------
+        1. Open gripper.
+        2. Approach  — hover at pre_grasp_height, then check wrist cam: if the
+                       object is no longer visible the target must have moved —
+                       abort immediately and return False.
+        3. Descend   — lower to object centre (shape-adjusted); check wrist cam
+                       again just before closing (object may have rolled away).
+        4. Close     — force-limited close; finger gap checked afterward to
+                       confirm something was actually gripped.
+        5. Lift      — raise to lift_height only when grip is confirmed.
+
+        Shape-specific finger/force tuning
+        -----------------------------------
+        box      : tight close (gripper_closed), standard force.
+        cylinder : full close against contact (physics stops fingers), 2.5× force.
+        sphere   : same as cylinder.
+
+        Returns True on successful lift, False if any reactive check aborts.
         """
         grasp_orn = p.getQuaternionFromEuler([math.pi, 0.0, 0.0])
         ws = self._ws
 
-        # Shape-specific finger gap and descend offset.
-        # Cylinder/sphere: close fully and let physics contact stop the fingers
-        # at the object surface (force-limited close = natural compliance).
-        # A higher grasp force is used to resist the object weight during lift.
         if shape in ("cylinder", "sphere"):
-            finger_target = 0.0          # drive fingers closed until contact
-            grasp_f = self._rc.grasp_force * 2.5  # clamp harder on round surfaces
-            descend_bias = 0.008         # grip slightly above table so fingers wrap object body
-        else:  # box
+            finger_target = 0.0
+            grasp_f = self._rc.grasp_force * 2.5
+            descend_bias = 0.008
+        else:
             finger_target = self._rc.gripper_closed
             grasp_f = self._rc.grasp_force
             descend_bias = 0.0
@@ -233,18 +273,27 @@ class RobotController:
         print(f"    [Grasp] Opening gripper (shape={shape}) …")
         self.open_gripper()
 
+        # ── Stage 2: Approach & pre-grasp check ──────────────────────────
         pre_pos = [float(target_xyz[0]), float(target_xyz[1]),
                    float(target_xyz[2]) + ws.pre_grasp_height]
         print(f"    [Grasp] Approaching pre-grasp at z = {pre_pos[2]:.3f} m …")
         self.move_ee_to(pre_pos, grasp_orn, n_steps=220)
 
+        if wrist_cam is not None and not self._object_visible(wrist_cam):
+            print("    [Grasp] ✗ Object not visible from pre-grasp hover — target moved, aborting.")
+            self.home()
+            return False
+
+        # ── Stage 3: Descend ──────────────────────────────────────────────
+        # (No wrist check here — at close range the gripper fingers block the FOV.)
         obj_centre_z = (table_height + float(target_xyz[2])) / 2.0 + descend_bias
         grasp_pos = [float(target_xyz[0]), float(target_xyz[1]), obj_centre_z]
         print(f"    [Grasp] Descending to z = {grasp_pos[2]:.3f} m …")
         self.move_ee_to(grasp_pos, grasp_orn, n_steps=160)
 
+        # ── Stage 4: Close & grip verification ───────────────────────────
         gap_mm = finger_target * 1000
-        print(f"    [Grasp] Closing gripper (target gap={gap_mm:.1f} mm, force={grasp_f:.0f} N) …")
+        print(f"    [Grasp] Closing gripper (gap target={gap_mm:.1f} mm, force={grasp_f:.0f} N) …")
         half = finger_target / 2.0
         for fj in self._rc.finger_joints:
             p.setJointMotorControl2(
@@ -257,6 +306,11 @@ class RobotController:
             if self._use_gui:
                 time.sleep(1.0 / self._sc.sim_hz)
 
+        if not self._grip_succeeded():
+            print("    [Grasp] ✗ Fingers fully closed — nothing was gripped, aborting lift.")
+            self.home()
+            return False
+
         # Keep gripper clamped hard throughout the lift
         for fj in self._rc.finger_joints:
             p.setJointMotorControl2(
@@ -264,10 +318,11 @@ class RobotController:
                 targetPosition=half, force=grasp_f, maxVelocity=0.05,
             )
 
+        # ── Stage 5: Lift ─────────────────────────────────────────────────
         lift_pos = [float(target_xyz[0]), float(target_xyz[1]),
                     float(target_xyz[2]) + ws.lift_height]
         print(f"    [Grasp] Lifting to z = {lift_pos[2]:.3f} m …")
         self.move_ee_to(lift_pos, grasp_orn, n_steps=220)
 
-        print("    [Grasp] Sequence complete.")
+        print("    [Grasp] ✓ Sequence complete.")
         return True

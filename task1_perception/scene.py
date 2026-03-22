@@ -236,6 +236,9 @@ class SceneManager:
         p.configureDebugVisualizer(p.COV_ENABLE_SHADOWS, 0)
         p.configureDebugVisualizer(p.COV_ENABLE_GUI, 1)
         p.configureDebugVisualizer(p.COV_ENABLE_MOUSE_PICKING, 0)
+        p.configureDebugVisualizer(p.COV_ENABLE_RGB_BUFFER_PREVIEW, 0)
+        p.configureDebugVisualizer(p.COV_ENABLE_DEPTH_BUFFER_PREVIEW, 0)
+        p.configureDebugVisualizer(p.COV_ENABLE_SEGMENTATION_MARK_PREVIEW, 0)
         p.resetDebugVisualizerCamera(
             cameraDistance=1.5,
             cameraYaw=45,

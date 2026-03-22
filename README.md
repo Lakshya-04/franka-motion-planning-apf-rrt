@@ -8,6 +8,9 @@ Franka Panda robotics in PyBullet. Perception and pick-and-place, hybrid APF-gui
 
 ## Results
 
+### Task 1: Perception & Pick-and-Place
+![Task 1 perception demo](task1_perception/results/demo_task1_perception.gif)
+
 ### Task 2: Motion Planner comparison (APF-RRT vs Vanilla RRT vs APF-RRT+PSO)
 ![Task 2 simulation demo](task2_motion_planning/results/demo_motion_planning.gif)
 ![Task 2 planner validation](task2_motion_planning/results/apf_rrt_smooth.png)

@@ -124,12 +124,12 @@ class PickAndPlacePipeline:
         if self._use_gui:
             _init_display(self._cam_cfg)
 
-        overhead_rgb, overhead_depth, _ = self._overhead.capture()
+        overhead_rgb, overhead_depth, overhead_seg = self._overhead.capture()
         wrist_rgb, _, _ = self._wrist.capture()
 
         table_h = self._scene_cfg.table_height
         detections = self._detector.detect(
-            self._overhead, overhead_rgb, overhead_depth, table_h
+            self._overhead, overhead_rgb, overhead_depth, table_h, overhead_seg
         )
 
         print(
@@ -155,7 +155,8 @@ class PickAndPlacePipeline:
                 f"[{target[0]:.3f}, {target[1]:.3f}, {target[2]:.3f}] …"
             )
 
-            self._controller.grasp(target, table_h, shape=det.shape)
+            self._controller.grasp(target, table_h, shape=det.shape,
+                                   wrist_cam=self._wrist)
 
             if self._use_gui:
                 for _ in range(120):

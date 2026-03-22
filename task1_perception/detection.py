@@ -72,16 +72,22 @@ class ShapeClassifier:
     # Threshold at 0.88 gives a clean separation in practice.
     ROUND_THRESH: float = 0.88
 
-    # Depth-buffer variance threshold distinguishing flat (cylinder) from
-    # curved (sphere) tops.  Empirically: sphere ≈ 3e-7–1e-5, cylinder ≈ 0.
-    SPHERE_VAR_THRESH: float = 2e-7
+    # Central-patch depth-variance threshold (5×5 px around centroid, body pixels only).
+    # Measured values: sphere ≈ 6e-8–2e-7, cylinder ≈ 1e-11, box ≈ 1e-15.
+    # 1e-8 sits 3 orders of magnitude above cylinder noise and 1 decade below spheres.
+    SPHERE_VAR_THRESH: float = 1e-8
+    # Half-side of the central depth-sampling patch (pixels); 2 → 5×5 window.
+    PATCH_HALF: int = 2
 
     def classify(
         self,
         contour: np.ndarray,
         depth_img: np.ndarray,
+        seg_img: np.ndarray,
         img_h: int,
         img_w: int,
+        centroid_px: int,
+        centroid_py: int,
     ) -> str:
         """Return "box", "cylinder", or "sphere" for the given contour.
 
@@ -91,32 +97,57 @@ class ShapeClassifier:
            significant depth variation even when its small projected size
            makes the contour look less circular.  This catches small spheres
            that would otherwise be mis-labelled as boxes by a circularity cut.
+
+           Depth values are sampled ONLY from the object's own body pixels
+           (via PyBullet's segmentation mask) to avoid contamination from
+           robot-arm depth values that bleed into adjacent pixels.
+
         2. Circularity check: distinguishes cylinder (high circularity, flat
            depth) from box (lower circularity after the sphere gate).
 
         Args:
-            contour  : OpenCV contour array (N×1×2 int32).
-            depth_img: Full-frame depth buffer float32 H×W, values in [0, 1].
-            img_h    : Image height in pixels.
-            img_w    : Image width in pixels.
+            contour     : OpenCV contour array (N×1×2 int32).
+            depth_img   : Full-frame depth buffer float32 H×W, values in [0, 1].
+            seg_img     : PyBullet segmentation mask int32 H×W (body IDs per pixel).
+            img_h       : Image height in pixels.
+            img_w       : Image width in pixels.
+            centroid_px : X pixel of the object centroid (used to look up body ID).
+            centroid_py : Y pixel of the object centroid.
         """
         area = cv2.contourArea(contour)
         perimeter = cv2.arcLength(contour, True)
         if perimeter < 1e-6 or area < 1.0:
             return "box"
 
-        # -- Depth variance (sphere gate, evaluated before circularity) ------
-        mask = np.zeros((img_h, img_w), dtype=np.uint8)
-        cv2.drawContours(mask, [contour], -1, 255, cv2.FILLED)
-        depth_vals = depth_img[mask > 0]
-        depth_var = float(np.var(depth_vals)) if len(depth_vals) > 3 else 0.0
+        # -- Central-patch depth variance (sphere gate) ----------------------
+        # Sample a small PATCH_HALF×2+1 window right at the contour centroid,
+        # restricted to the object's own body pixels (via seg_img).
+        # This measures the depth curvature at the object's topmost visible
+        # surface — flat for box/cylinder tops, curved for spheres.
+        P = self.PATCH_HALF
+        y0 = max(0, centroid_py - P);  y1 = min(img_h, centroid_py + P + 1)
+        x0 = max(0, centroid_px - P);  x1 = min(img_w, centroid_px + P + 1)
+        patch_depth = depth_img[y0:y1, x0:x1].ravel()
+        patch_seg   = seg_img[y0:y1, x0:x1].ravel()
 
-        # Sphere: curved top → high depth variance regardless of projected size.
-        # Box/cylinder tops are flat → depth_var ≈ 0 (< 1e-9).
+        body_id = int(seg_img[centroid_py, centroid_px])
+        if body_id > 0:
+            own = patch_depth[patch_seg == body_id]
+        else:
+            own = patch_depth   # fallback if seg unavailable
+
+        depth_var = float(np.var(own)) if len(own) > 2 else 0.0
+
+        # Sphere: curved top → depth_var ≈ 6e-8–2e-7 (measured with robot in scene).
+        # Cylinder/box: flat top → depth_var ≈ 1e-11 / 1e-15.
         if depth_var >= self.SPHERE_VAR_THRESH:
             return "sphere"
 
         # -- Circularity: cylinder vs box ------------------------------------
+        # Cylinder projects as a circle overhead → high circularity regardless of orientation.
+        # Box projects as a rectangle (or rotated square) → lower circularity.
+        # Note: a box rotated exactly 45° can reach circ≈0.91; it will be labelled
+        # "cylinder" in that edge case, but the grasping behaviour is identical.
         circularity = 4.0 * math.pi * area / (perimeter * perimeter)
         return "cylinder" if circularity >= self.ROUND_THRESH else "box"
 
@@ -161,6 +192,7 @@ class ObjectDetector:
         rgb_img: np.ndarray,
         depth_img: np.ndarray,
         table_height: float,
+        seg_img: np.ndarray | None = None,
     ) -> list[Detection]:
         """
         Run the full detection pipeline on one overhead frame.
@@ -171,6 +203,10 @@ class ObjectDetector:
         rgb_img     : uint8 H×W×3 overhead RGB image.
         depth_img   : float32 H×W depth buffer.
         table_height: Z coordinate of the table surface (used for workspace filter).
+        seg_img     : int32 H×W PyBullet segmentation mask (body IDs).  When
+                      provided the ShapeClassifier uses per-body depth sampling
+                      to avoid contamination from robot-arm depth values in
+                      neighbouring pixels.
 
         Returns
         -------
@@ -186,7 +222,10 @@ class ObjectDetector:
         for px, py, contour in candidates:
             xyz = camera.pixel_to_world(px, py, depth_img)
             colour = self._classify_colour(rgb_img, px, py)
-            shape = self._shape_clf.classify(contour, depth_img, img_h, img_w)
+            seg = seg_img if seg_img is not None else np.zeros((img_h, img_w), dtype=np.int32)
+            shape = self._shape_clf.classify(
+                contour, depth_img, seg, img_h, img_w, px, py
+            )
 
             z_min = table_height + ws.z_min_above_table
             z_max = table_height + ws.z_max_above_table
