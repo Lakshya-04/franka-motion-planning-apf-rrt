@@ -1,7 +1,7 @@
 """
 Hybrid APF-Guided RRT Motion Planner
 =====================================
-Task 2 of the SocialHW Robotics Assessment
+Franka Panda motion planning in PyBullet
 
 Architecture
 ------------

@@ -2,7 +2,7 @@
  * haptic_pid.hpp
  * ==============
  * Public interface for the Haptic Dial PID controller.
- * Task 3 — SocialHW Robotics Assessment
+ * Haptic Dial PID controller — anti-windup, derivative LPF, detent simulation
  *
  * Design
  * ------

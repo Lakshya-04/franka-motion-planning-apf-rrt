@@ -1,8 +1,7 @@
 """
 moteus_actuator.py
 ==================
-Task 4 — High-Speed Reciprocating Actuator
-SocialHW Robotics Assessment
+High-Speed Reciprocating Actuator — moteus SDK
 
 Hardware setup
 --------------

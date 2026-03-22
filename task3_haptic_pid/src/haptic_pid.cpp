@@ -2,7 +2,7 @@
  * haptic_pid.cpp
  * ==============
  * Implementation of the PID class declared in haptic_pid.hpp.
- * Task 3 — SocialHW Robotics Assessment
+ * Haptic Dial PID — anti-windup (clamping), derivative LPF, detent helper
  *
  * Build (via CMake — preferred):
  *   cmake -S . -B build && cmake --build build

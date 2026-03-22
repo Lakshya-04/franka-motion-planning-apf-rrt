@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16)
 
 project(haptic_pid_demo
   VERSION 1.0
-  DESCRIPTION "Task 3 — Haptic Dial PID controller (SocialHW Robotics Assessment)"
+  DESCRIPTION "Task 3 — Haptic Dial PID controller"
   LANGUAGES CXX
 )
 

@@ -1,13 +1,29 @@
-# SocialHW Robotics Assessment — Full Solution
+# Franka Panda Motion Planning — APF-RRT + PSO
 
-Four technical tasks for the **Robotics Engineer** position, implemented in Python / C++.
+Franka Panda robotics in PyBullet — perception & pick-and-place, hybrid APF-guided RRT motion planning with PSO path smoothing, haptic dial PID, and moteus high-speed actuator control. Implemented in Python / C++.
+
+![Pick and Place demo](demo_pick_and_place.gif)
+
+---
+
+## Results
+
+### Task 2 — Motion Planner comparison (APF-RRT vs Vanilla RRT vs APF-RRT+PSO)
+![Task 2 planner validation](task2_motion_planning/results/apf_rrt_smooth.png)
+![Task 2 metrics](tests/results/test_task2_planner.png)
+
+### Task 3 — Haptic Dial PID (anti-windup + derivative LPF)
+![Task 3 PID validation](tests/results/test_task3_pid.png)
+
+### Task 4 — moteus Actuator simulation
+![Task 4 moteus validation](tests/results/test_task4_moteus.png)
 
 ---
 
 ## Repository Layout
 
 ```
-social-hw-task/
+franka-motion-planning-apf-rrt/
 ├── Makefile
 ├── requirements.txt
 ├── task1_perception/          # Task 1 — Pick-and-Place pipeline

@@ -1,7 +1,7 @@
 /**
  * @file main.cpp
  * @brief Simulation demo and smoke-test for the Haptic Dial PID controller.
- *        Task 3 — SocialHW Robotics Assessment
+ *        Haptic Dial PID — simulation demo and smoke-test
  *
  * @details
  * Scenario: a BLDC motor drives a high-end haptic rotary knob that must
