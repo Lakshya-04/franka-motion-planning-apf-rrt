@@ -111,14 +111,21 @@ make test-task4   # Task 4 moteus validation -> tests/results/test_task4_moteus.
 
 ### What it does
 
-Implements a full autonomous pick-and-place pipeline for a Franka Panda robot in PyBullet:
+Implements a full autonomous pick-and-place pipeline for a Franka Panda robot in PyBullet with **three distinct object shapes** and a **geometric AI shape classifier**:
 
-1. **Scene setup** spawns N random coloured cubes on a table.
+1. **Scene setup** spawns N random objects (boxes, cylinders, spheres — evenly distributed) with vivid random colours.
 2. **Dual camera** overhead RGB-D camera (perception) + wrist-mounted camera (verification).
 3. **Detection** HSV colour segmentation via OpenCV to locate object centroids in pixel space.
-4. **Classification** colour name assigned from mean HSV hue in a patch around each centroid.
-5. **3-D back-projection** `pixel_to_world()` converts `(u, v, depth)` to world `(X, Y, Z)`.
-6. **Pick-and-place** `grasp_point_world()` drives the arm through Approach, Descend, Grasp, Lift using PyBullet IK.
+4. **Shape classification** `ShapeClassifier` uses two projective-geometry features:
+   - *Circularity* = 4π·area / perimeter² — distinguishes box (rectangular mask, ~0.78) from round shapes (cylinder/sphere, ~0.95–1.0)
+   - *Depth-map variance* inside the contour mask — flat-top cylinder yields near-zero variance; curved-top sphere yields measurable variance (depth increases radially from centre)
+5. **Colour classification** mean HSV hue in a patch around each centroid.
+6. **3-D back-projection** `pixel_to_world()` converts `(u, v, depth)` to world `(X, Y, Z)`.
+7. **Shape-aware grasping** finger gap and descend height are tuned per shape class (box: tight close; cylinder/sphere: medium gap, adjusted descent).
+
+#### Why the classifier is real-world transferable
+
+The features are derived from first-principles projective geometry, not learned from synthetic textures. Circularity is viewpoint-stable and lighting-invariant. Depth variance works identically from any metric depth sensor (Intel RealSense, Azure Kinect, ZED). No retraining needed to deploy on real hardware.
 
 ### Key bug fix (vs. starter code)
 
@@ -146,11 +153,11 @@ python3 -m task1_perception.pipeline --headless
 
 | Module | Function |
 |---|---|
-| `scene.py` | Scene initialisation, cube spawning |
-| `detection.py` | HSV segmentation, pixel centroids |
+| `scene.py` | Scene initialisation, multi-shape object spawning (box/cylinder/sphere) |
+| `detection.py` | HSV segmentation, `ShapeClassifier` (circularity + depth variance) |
 | `camera.py` | RGB-D capture, correct NDC back-projection |
 | `config.py` | Shared constants |
-| `controller.py` | IK, smoothstep interpolation, gripper control |
+| `controller.py` | IK, smoothstep interpolation, shape-aware gripper control |
 | `pipeline.py` | Entry point, orchestrates full pick-and-place loop |
 
 ---

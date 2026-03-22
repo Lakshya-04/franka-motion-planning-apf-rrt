@@ -6,7 +6,7 @@ SceneManager — owns the PyBullet world lifecycle (SRP: one reason to change).
 Responsibilities:
   - Connect / disconnect to/from the physics server.
   - Load URDFs (plane, table, robot).
-  - Spawn random coloured cubes.
+  - Spawn random coloured objects (boxes, cylinders, spheres).
   - Run warm-up physics steps until the scene is settled.
   - Configure the GUI camera and debug visualiser settings.
 
@@ -24,6 +24,17 @@ import pybullet as p
 import pybullet_data
 
 from .config import RobotConfig, SceneConfig
+
+
+def _hsv_to_rgb(h: float, s: float, v: float) -> tuple[float, float, float]:
+    """Convert HSV (all in [0,1]) to RGB tuple without importing colorsys."""
+    if s == 0.0:
+        return v, v, v
+    i = int(h * 6.0)
+    f = h * 6.0 - i
+    p, q, t = v * (1 - s), v * (1 - s * f), v * (1 - s * (1 - f))
+    sector = i % 6
+    return ((v, t, p), (q, v, p), (p, v, t), (p, q, v), (t, p, v), (v, p, q))[sector]
 
 
 class SceneManager:
@@ -51,6 +62,8 @@ class SceneManager:
         self._use_gui = use_gui
         self.robot_id: int = -1
         self._cube_ids: list[int] = []
+        # Maps body_id → shape string ("box", "cylinder", "sphere")
+        self.shape_map: dict[int, str] = {}
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -114,50 +127,88 @@ class SceneManager:
                              lateralFriction=rc.finger_lateral_friction)
 
     # ------------------------------------------------------------------
-    # Cube spawning
+    # Object spawning
     # ------------------------------------------------------------------
 
     def spawn_random_cubes(self, num_cubes: int) -> list[int]:
-        """Spawn randomly placed, sized, and coloured cubes on the table surface.
+        """Spawn randomly placed, sized, and coloured cubes (kept for compatibility)."""
+        return self.spawn_random_objects(num_cubes)
 
-        Each cube gets a random half-extent (15–28 mm), a random XY position
-        within the reachable table area, a random yaw, and a random RGB colour.
-        Lateral friction is set high (1.5) so cubes resist sliding on grasp.
+    def spawn_random_objects(self, num_objects: int) -> list[int]:
+        """Spawn a mix of boxes, cylinders, and spheres on the table surface.
+
+        Objects are distributed evenly across the three shape classes.  Each
+        object gets a vivid random RGB colour, random size (15–28 mm footprint
+        radius), and a random XY position within the reachable table area.
 
         Args:
-            num_cubes: Number of cubes to create.
+            num_objects: Total number of objects to create (rounded down per shape).
 
         Returns:
-            List of PyBullet body IDs for the spawned cubes, in creation order.
+            List of PyBullet body IDs for the spawned objects, in creation order.
         """
         table_cx = 0.5
         half_y = 0.30
         table_z = self._scene_cfg.table_height
         body_ids: list[int] = []
+        self.shape_map.clear()
 
-        for _ in range(num_cubes):
+        shapes = ["box", "cylinder", "sphere"]
+        # Distribute shapes evenly across the requested count
+        shape_sequence = [shapes[i % len(shapes)] for i in range(num_objects)]
+        random.shuffle(shape_sequence)
+
+        for shape in shape_sequence:
             size = random.uniform(0.015, 0.028)
-            pos = [
-                random.uniform(table_cx - 0.18, table_cx + 0.18),
-                random.uniform(-half_y + 0.05, half_y - 0.05),
-                table_z + size,
-            ]
-            orn = p.getQuaternionFromEuler([0, 0, random.uniform(0, math.pi)])
-            colour = [random.uniform(0, 1) for _ in range(3)] + [1.0]
+            pos_x = random.uniform(table_cx - 0.18, table_cx + 0.18)
+            pos_y = random.uniform(-half_y + 0.05, half_y - 0.05)
 
-            vis = p.createVisualShape(
-                p.GEOM_BOX, halfExtents=[size] * 3, rgbaColor=colour
-            )
-            col = p.createCollisionShape(p.GEOM_BOX, halfExtents=[size] * 3)
-            bid = p.createMultiBody(
-                baseMass=0.1,
-                baseCollisionShapeIndex=col,
-                baseVisualShapeIndex=vis,
-                basePosition=pos,
-                baseOrientation=orn,
-            )
+            # Choose a vivid colour (high saturation: avoid dull near-grey)
+            hue = random.uniform(0, 1)
+            colour = list(_hsv_to_rgb(hue, 1.0, 0.9)) + [1.0]
+
+            if shape == "box":
+                pos = [pos_x, pos_y, table_z + size]
+                orn = p.getQuaternionFromEuler([0, 0, random.uniform(0, math.pi)])
+                vis = p.createVisualShape(
+                    p.GEOM_BOX, halfExtents=[size] * 3, rgbaColor=colour
+                )
+                col = p.createCollisionShape(p.GEOM_BOX, halfExtents=[size] * 3)
+                bid = p.createMultiBody(
+                    baseMass=0.1, baseCollisionShapeIndex=col,
+                    baseVisualShapeIndex=vis, basePosition=pos, baseOrientation=orn,
+                )
+
+            elif shape == "cylinder":
+                height = size * 2.0   # height = diameter so it looks like a puck
+                pos = [pos_x, pos_y, table_z + height / 2.0]
+                orn = p.getQuaternionFromEuler([0, 0, 0])
+                vis = p.createVisualShape(
+                    p.GEOM_CYLINDER, radius=size, length=height, rgbaColor=colour
+                )
+                col = p.createCollisionShape(
+                    p.GEOM_CYLINDER, radius=size, height=height
+                )
+                bid = p.createMultiBody(
+                    baseMass=0.1, baseCollisionShapeIndex=col,
+                    baseVisualShapeIndex=vis, basePosition=pos, baseOrientation=orn,
+                )
+
+            else:  # sphere
+                pos = [pos_x, pos_y, table_z + size]
+                orn = p.getQuaternionFromEuler([0, 0, 0])
+                vis = p.createVisualShape(
+                    p.GEOM_SPHERE, radius=size, rgbaColor=colour
+                )
+                col = p.createCollisionShape(p.GEOM_SPHERE, radius=size)
+                bid = p.createMultiBody(
+                    baseMass=0.1, baseCollisionShapeIndex=col,
+                    baseVisualShapeIndex=vis, basePosition=pos, baseOrientation=orn,
+                )
+
             p.changeDynamics(bid, -1, lateralFriction=1.5)
             body_ids.append(bid)
+            self.shape_map[bid] = shape
 
         self._cube_ids = body_ids
         return body_ids

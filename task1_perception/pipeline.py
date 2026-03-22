@@ -68,7 +68,8 @@ def _show_cameras(
         for det in detections:
             cv2.drawMarker(overhead_bgr, (det.pixel_x, det.pixel_y),
                            (0, 255, 0), cv2.MARKER_CROSS, 14, 2)
-            cv2.putText(overhead_bgr, det.colour,
+            label = f"{det.shape}/{det.colour}"
+            cv2.putText(overhead_bgr, label,
                         (det.pixel_x + 6, det.pixel_y - 6),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
 
@@ -117,7 +118,7 @@ class PickAndPlacePipeline:
 
     def run(self, num_cubes: int = 5, sim_steps: int = 300) -> None:
         """Spawn cubes, detect, and grasp each one in turn."""
-        self._scene.spawn_random_cubes(num_cubes)
+        self._scene.spawn_random_objects(num_cubes)
         self._scene.settle(sim_steps)
 
         if self._use_gui:
@@ -138,7 +139,7 @@ class PickAndPlacePipeline:
             print(
                 f"  [{i}] pixel ({det.pixel_x:3d},{det.pixel_y:3d})  →  "
                 f"world [{det.world_xyz[0]:.3f}, {det.world_xyz[1]:.3f}, "
-                f"{det.world_xyz[2]:.3f}]  colour: {det.colour}"
+                f"{det.world_xyz[2]:.3f}]  shape: {det.shape:<8s}  colour: {det.colour}"
             )
 
         if self._use_gui:
@@ -150,11 +151,11 @@ class PickAndPlacePipeline:
             target[2] = max(target[2], table_h + 0.015)
 
             print(
-                f"\nGrasping object {idx} ({det.colour}) at "
+                f"\nGrasping object {idx} ({det.shape}/{det.colour}) at "
                 f"[{target[0]:.3f}, {target[1]:.3f}, {target[2]:.3f}] …"
             )
 
-            self._controller.grasp(target, table_h)
+            self._controller.grasp(target, table_h, shape=det.shape)
 
             if self._use_gui:
                 for _ in range(120):

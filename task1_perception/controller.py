@@ -190,25 +190,45 @@ class RobotController:
     # Grasp sequence
     # ------------------------------------------------------------------
 
-    def grasp(self, target_xyz: np.ndarray, table_height: float) -> bool:
+    def grasp(self, target_xyz: np.ndarray, table_height: float,
+              shape: str = "box") -> bool:
         """
-        Execute a complete 5-stage pick-and-place grasp sequence:
+        Execute a shape-aware 5-stage pick-and-place grasp sequence:
 
           1. Open gripper.
           2. Approach — pre-grasp hover (target + pre_grasp_height above).
-          3. Descend  — lower EE to object centre (midpoint of table–top surface).
-          4. Grasp    — close gripper at high force.
+          3. Descend  — lower EE to object centre (shape-adjusted height).
+          4. Grasp    — close gripper (finger gap tuned per shape class).
           5. Lift     — raise object to lift_height.
 
-        The EE is oriented with its Z-axis pointing straight down
-        (π-radian roll → quaternion ≈ [1, 0, 0, 0] in [x,y,z,w]).
+        Shape-specific adjustments
+        --------------------------
+        box      : Standard parallel-jaw close; descend to cube centre.
+        cylinder : Wider finger gap (grip around cylindrical body); descend lower.
+        sphere   : Same gap as cylinder; descend slightly less (sphere sits higher).
+
+        Args:
+            target_xyz  : World-frame position of the object centroid [m].
+            table_height: Z of the table surface [m].
+            shape       : Detected shape class ("box", "cylinder", or "sphere").
 
         Returns True on success (IK assumed to converge for in-workspace targets).
         """
         grasp_orn = p.getQuaternionFromEuler([math.pi, 0.0, 0.0])
         ws = self._ws
 
-        print("    [Grasp] Opening gripper …")
+        # Shape-specific finger gap and descend offset
+        if shape == "cylinder":
+            finger_target = self._rc.gripper_open * 0.65   # medium grip
+            descend_bias = -0.005                           # go a bit lower
+        elif shape == "sphere":
+            finger_target = self._rc.gripper_open * 0.60   # similar to cylinder
+            descend_bias = 0.005                            # sphere sits rounder, go less low
+        else:  # box
+            finger_target = self._rc.gripper_closed
+            descend_bias = 0.0
+
+        print(f"    [Grasp] Opening gripper (shape={shape}) …")
         self.open_gripper()
 
         pre_pos = [float(target_xyz[0]), float(target_xyz[1]),
@@ -216,20 +236,29 @@ class RobotController:
         print(f"    [Grasp] Approaching pre-grasp at z = {pre_pos[2]:.3f} m …")
         self.move_ee_to(pre_pos, grasp_orn, n_steps=220)
 
-        cube_centre_z = (table_height + float(target_xyz[2])) / 2.0
-        grasp_pos = [float(target_xyz[0]), float(target_xyz[1]), cube_centre_z]
-        print(f"    [Grasp] Descending to z = {grasp_pos[2]:.3f} m (cube centre) …")
+        obj_centre_z = (table_height + float(target_xyz[2])) / 2.0 + descend_bias
+        grasp_pos = [float(target_xyz[0]), float(target_xyz[1]), obj_centre_z]
+        print(f"    [Grasp] Descending to z = {grasp_pos[2]:.3f} m …")
         self.move_ee_to(grasp_pos, grasp_orn, n_steps=160)
 
-        print("    [Grasp] Closing gripper …")
-        self.close_gripper()
+        print(f"    [Grasp] Closing gripper to {finger_target*100:.1f}% …")
+        half = finger_target / 2.0
+        for fj in self._rc.finger_joints:
+            p.setJointMotorControl2(
+                self._robot, fj, p.POSITION_CONTROL,
+                targetPosition=half, force=self._rc.grasp_force,
+                maxVelocity=self._rc.finger_vel,
+            )
+        for _ in range(120):
+            p.stepSimulation()
+            if self._use_gui:
+                time.sleep(1.0 / self._sc.sim_hz)
 
         # Keep gripper active throughout the lift
         for fj in self._rc.finger_joints:
             p.setJointMotorControl2(
                 self._robot, fj, p.POSITION_CONTROL,
-                targetPosition=self._rc.gripper_closed / 2,
-                force=self._rc.grasp_force, maxVelocity=0.1,
+                targetPosition=half, force=self._rc.grasp_force, maxVelocity=0.1,
             )
 
         lift_pos = [float(target_xyz[0]), float(target_xyz[1]),
