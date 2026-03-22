@@ -297,6 +297,27 @@ make test-task4
 
 ---
 
+## References
+
+The algorithms and techniques in this project draw on the following foundational works:
+
+**Motion Planning**
+- LaValle, S.M. (1998). *Rapidly-Exploring Random Trees: A New Tool for Path Planning.* TR 98-11, Iowa State University. — the original RRT formulation used as the baseline planner.
+- Kuffner, J.J. & LaValle, S.M. (2000). *RRT-Connect: An Efficient Approach to Single-Query Path Planning.* IEEE ICRA. — bidirectional dual-tree extension implemented in `plan_bidirectional()`.
+- Geraerts, R. & Overmars, M.H. (2007). *Creating High-quality Paths for Motion Planning.* IJRR 26(8), 845–863. — greedy waypoint shortcutting approach used in `shortcut_path()`.
+
+**Artificial Potential Fields**
+- Khatib, O. (1986). *Real-Time Obstacle Avoidance for Manipulators and Mobile Robots.* IJRR 5(1), 90–98. — defines the attractive/repulsive field formulation; we map workspace forces to joint torques via Jacobian-transpose.
+- Qureshi, A.H. & Ayaz, Y. (2016). *Intelligent bidirectional rapidly-exploring random trees for optimal motion planning in complex cluttered environments.* Robotics and Autonomous Systems 68, 1–11. — inspiration for combining APF guidance with bidirectional RRT.
+
+**Optimisation / PSO**
+- Kennedy, J. & Eberhart, R. (1995). *Particle Swarm Optimization.* IEEE ICNN. — the PSO variant used in `PSOPathSmoother` for Phase B path smoothing.
+
+**Simulation & Robot Model**
+- Coumans, E. & Bai, Y. (2016–2021). *PyBullet Physics Simulation.* — physics engine, Franka Panda URDF, and IK solver used throughout Tasks 1 & 2.
+
+---
+
 ## Evaluation criteria mapping
 
 | Criterion | Where addressed |
