@@ -1,6 +1,3 @@
-run,vanilla_success,vanilla_length,vanilla_nodes,vanilla_smoothness,vanilla_efficiency,vanilla_clearance,vanilla_time,apf_success,apf_length,apf_nodes,apf_smoothness,apf_efficiency,apf_clearance,apf_time,pso_success,pso_length,pso_smoothness,pso_efficiency,pso_clearance,pso_time
-1,1,5.4023,732,0.3,0.529,0.1022,2.528,1,4.7665,211,0.3,0.5995,0.1022,0.323,1,4.1109,0.428,0.6951,0.1022,4.88
-2,1,8.2837,221,0.3,0.345,0.1022,0.331,0,nan,3837,nan,nan,nan,nan,0,nan,nan,nan,nan,nan
-3,0,nan,2931,nan,nan,nan,nan,1,3.9453,79,0.3,0.7243,0.1022,0.108,1,3.526,0.3704,0.8104,0.1022,4.095
-4,0,nan,2922,nan,nan,nan,nan,0,nan,3100,nan,nan,nan,nan,0,nan,nan,nan,nan,nan
-5,1,5.1378,81,0.3,0.5562,0.1022,0.095,1,5.3433,212,0.3,0.5348,0.1022,0.345,1,5.0619,0.4186,0.5645,0.1022,5.624
+run,vanilla_success,vanilla_length,vanilla_nodes,vanilla_time,apf_success,apf_length,apf_nodes,apf_time,bidir_success,bidir_length,bidir_nodes,bidir_time,parallel_success,parallel_length,parallel_time,pso_success,pso_length,pso_time
+1,1,4.8102,87,0.109,0,nan,3552,nan,1,8.8576,62,0.099,1,7.6576,0.359,1,6.6776,5.778
+2,1,3.2095,67,0.102,1,4.4126,92,0.133,1,4.7115,29,0.04,1,7.6576,0.34,1,6.704,5.47

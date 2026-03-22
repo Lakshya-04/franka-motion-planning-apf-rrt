@@ -462,6 +462,177 @@ class RRTPlanner:
         """Return total joint-space arc length of a path."""
         return sum(np.linalg.norm(path[i + 1] - path[i]) for i in range(len(path) - 1))
 
+    # ------------------------------------------------------------------
+    def plan_bidirectional(
+        self, q_start: np.ndarray, q_goal: np.ndarray
+    ) -> Optional[List[np.ndarray]]:
+        """
+        Bidirectional RRT-Connect.
+
+        Grows two trees simultaneously — one from q_start, one from q_goal —
+        and attempts to bridge them at every step.  This naturally escapes local
+        minima that trap single-tree planners: when the start-tree is stuck behind
+        an obstacle cluster, the goal-tree can route around it from the other side
+        and meet in the middle.
+
+        On each iteration the *shorter* tree is extended (balanced growth), then
+        we check whether the new node is close enough to connect to the other tree.
+        APF guidance and stall-escape are applied to whichever tree is extending.
+        """
+        tree_s: List[Node] = [Node(q=q_start.copy())]   # start tree
+        tree_g: List[Node] = [Node(q=q_goal.copy())]    # goal tree
+        t0 = time.time()
+        stall_s = stall_g = 0
+        last_s = last_g = -1
+
+        def _nearest_in(tree: List[Node], q: np.ndarray) -> Tuple[int, np.ndarray]:
+            dists = [np.linalg.norm(n.q - q) for n in tree]
+            idx = int(np.argmin(dists))
+            return idx, tree[idx].q.copy()
+
+        def _extract(tree: List[Node], idx: int) -> List[np.ndarray]:
+            path, i = [], idx
+            while i is not None:
+                path.append(tree[i].q.copy())
+                i = tree[i].parent
+            return list(reversed(path))
+
+        for iteration in range(self.max_iter):
+            # Balance: extend the smaller tree so both grow at similar rates
+            extend_start = len(tree_s) <= len(tree_g)
+            active, passive = (tree_s, tree_g) if extend_start else (tree_g, tree_s)
+
+            # Adaptive goal bias: ramp up in second half of budget
+            progress = iteration / self.max_iter
+            eff_bias = self.goal_bias + (0.40 - self.goal_bias) * max(0.0, (progress - 0.5) * 2)
+
+            # Sample: with eff_bias probability, pull toward a random node in
+            # the passive tree (greedily tries to bridge); otherwise random.
+            if random.random() < eff_bias:
+                q_rand = passive[random.randint(0, len(passive) - 1)].q.copy()
+            else:
+                q_rand = np.array(
+                    [random.uniform(lo, hi) for lo, hi in zip(JOINT_LOWER, JOINT_UPPER)]
+                )
+
+            near_idx, q_near = _nearest_in(active, q_rand)
+
+            # Stall detection per tree
+            if extend_start:
+                stall_s = stall_s + 1 if near_idx == last_s else 0
+                last_s = near_idx
+                force_rand = stall_s >= self.stall_limit
+            else:
+                stall_g = stall_g + 1 if near_idx == last_g else 0
+                last_g = near_idx
+                force_rand = stall_g >= self.stall_limit
+
+            q_new = self._extend(q_near, q_rand, skip_apf=force_rand)
+            if q_new is None:
+                continue
+            if not self._path_free(q_near, q_new):
+                continue
+
+            new_idx = len(active)
+            active.append(Node(q=q_new, parent=near_idx))
+
+            # Try to connect new node to the passive tree
+            conn_idx, q_conn = _nearest_in(passive, q_new)
+            if np.linalg.norm(q_new - q_conn) < self.goal_tol:
+                if self._path_free(q_new, q_conn):
+                    path_active  = _extract(active,  new_idx)
+                    path_passive = _extract(passive, conn_idx)
+                    full = (path_active + list(reversed(path_passive))
+                            if extend_start
+                            else list(reversed(path_passive)) + path_active)
+                    self.stats = {
+                        "success": True,
+                        "time": time.time() - t0,
+                        "node_count": len(tree_s) + len(tree_g),
+                        "path_length": self.path_length(full),
+                    }
+                    self.tree = tree_s  # expose for visualisation
+                    return full
+
+        self.stats = {
+            "success": False,
+            "time": time.time() - t0,
+            "node_count": len(tree_s) + len(tree_g),
+            "path_length": float("inf"),
+        }
+        return None
+
+
+# ===========================================================================
+# Parallel portfolio planner
+# ===========================================================================
+
+
+def _parallel_worker(args: tuple):
+    """
+    Module-level worker for ProcessPoolExecutor.
+    Each worker spins up its own PyBullet DIRECT instance so processes are
+    fully independent — no shared memory, no GIL contention.
+    """
+    seed, use_apf, max_iter, bidirectional = args
+    import random as _r
+    import numpy as _np
+    _r.seed(seed)
+    _np.random.seed(seed)
+
+    env = RobotEnv(use_gui=False)
+    try:
+        apf = APFGradient(env) if use_apf else None
+        planner = RRTPlanner(env, apf=apf, max_iter=max_iter)
+        path = (planner.plan_bidirectional(Q_START, Q_GOAL)
+                if bidirectional else planner.plan(Q_START, Q_GOAL))
+        return path, planner.stats.copy()
+    finally:
+        try:
+            env.disconnect()
+        except Exception:
+            pass
+
+
+def plan_parallel_portfolio(
+    n_workers: int = 4,
+    use_apf: bool = True,
+    bidirectional: bool = True,
+    max_iter: int = 8000,
+) -> Tuple[Optional[List[np.ndarray]], dict]:
+    """
+    Parallel portfolio planner.
+
+    Launches `n_workers` independent planning processes, each with a different
+    random seed.  Returns the first successful path found.
+
+    With per-run success rate p and n workers, combined success ≈ 1 − (1−p)^n.
+    E.g. p=0.60, n=4  →  97 % success at ~1/4 the single-run wall-clock time
+    for the typical (fast) cases.
+    """
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+
+    t0 = time.time()
+    worker_args = [(i, use_apf, max_iter, bidirectional) for i in range(n_workers)]
+
+    with ProcessPoolExecutor(max_workers=n_workers) as executor:
+        futures = {executor.submit(_parallel_worker, a): a[0] for a in worker_args}
+        for future in as_completed(futures):
+            try:
+                path, stats = future.result()
+            except Exception:
+                continue
+            if path is not None:
+                for f in futures:
+                    f.cancel()
+                stats["total_time"] = time.time() - t0
+                stats["workers"] = n_workers
+                return path, stats
+
+    return None, {
+        "success": False, "total_time": time.time() - t0, "workers": n_workers
+    }
+
 
 # ===========================================================================
 # Phase B — PSO Path Smoother

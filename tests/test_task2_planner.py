@@ -60,6 +60,7 @@ from task2_motion_planning.apf_rrt_planner import (
     Q_START,
     RobotEnv,
     RRTPlanner,
+    plan_parallel_portfolio,
 )
 
 RESULTS_DIR = Path(__file__).parent / "results"
@@ -195,14 +196,30 @@ def test_path_smoothness_metric():
 # ---------------------------------------------------------------------------
 
 
-_MAX_ITER = 4000  # per-trial cap — keeps multi-run times bounded
+_MAX_ITER = 4000   # per-trial cap for single-process planners
+_N_WORKERS = 4     # parallel portfolio workers
+
+
+def _make_metrics_nan():
+    m = {k: float("nan") for k in ("length", "smoothness", "efficiency",
+                                    "goal_error", "clearance", "time", "waypoints")}
+    m["nodes"] = float("nan")
+    m["success"] = 0
+    return m
 
 
 def _run_once(env: RobotEnv, pso: PSOPathSmoother) -> dict:
-    """One trial: vanilla RRT + APF-RRT + PSO. Returns per-planner metric dicts."""
+    """
+    One trial — four planners compared:
+      vanilla     : single-tree RRT, no APF
+      apf         : single-tree APF-RRT (stall detection + adaptive bias)
+      bidir       : bidirectional RRT-Connect + APF
+      parallel    : parallel portfolio (N workers × bidirectional APF-RRT)
+    PSO smoothing applied to whichever of apf / bidir / parallel succeeds first.
+    """
     row = {}
 
-    # Vanilla RRT
+    # ── Vanilla RRT ────────────────────────────────────────────────────
     t0 = time.time()
     v_planner = RRTPlanner(env, apf=None, max_iter=_MAX_ITER)
     v_path = v_planner.plan(Q_START, Q_GOAL)
@@ -212,13 +229,11 @@ def _run_once(env: RobotEnv, pso: PSOPathSmoother) -> dict:
         m["nodes"] = v_planner.stats["node_count"]
         m["success"] = 1
     else:
-        m = {k: float("nan") for k in ("length", "smoothness", "efficiency",
-                                        "goal_error", "clearance", "time", "waypoints")}
+        m = _make_metrics_nan()
         m["nodes"] = v_planner.stats["node_count"]
-        m["success"] = 0
     row["vanilla"] = m
 
-    # APF-RRT
+    # ── APF-RRT (single-tree) ──────────────────────────────────────────
     apf = APFGradient(env)
     t0 = time.time()
     a_planner = RRTPlanner(env, apf=apf, max_iter=_MAX_ITER)
@@ -229,26 +244,49 @@ def _run_once(env: RobotEnv, pso: PSOPathSmoother) -> dict:
         m["nodes"] = a_planner.stats["node_count"]
         m["success"] = 1
     else:
-        m = {k: float("nan") for k in ("length", "smoothness", "efficiency",
-                                        "goal_error", "clearance", "time", "waypoints")}
+        m = _make_metrics_nan()
         m["nodes"] = a_planner.stats["node_count"]
-        m["success"] = 0
-        a_path = None
     row["apf"] = m
 
-    # PSO (only if APF succeeded)
-    if a_path is not None:
+    # ── Bidirectional APF-RRT ─────────────────────────────────────────
+    t0 = time.time()
+    b_planner = RRTPlanner(env, apf=APFGradient(env), max_iter=_MAX_ITER)
+    b_path = b_planner.plan_bidirectional(Q_START, Q_GOAL)
+    b_time = time.time() - t0
+    if b_path is not None:
+        m = compute_metrics(b_path, env, b_time)
+        m["nodes"] = b_planner.stats["node_count"]
+        m["success"] = 1
+    else:
+        m = _make_metrics_nan()
+        m["nodes"] = b_planner.stats["node_count"]
+    row["bidir"] = m
+
+    # ── Parallel portfolio (N workers, bidirectional APF-RRT) ─────────
+    p_path, p_stats = plan_parallel_portfolio(
+        n_workers=_N_WORKERS, use_apf=True, bidirectional=True, max_iter=_MAX_ITER
+    )
+    if p_path is not None:
+        m = compute_metrics(p_path, env, p_stats["total_time"])
+        m["nodes"] = p_stats.get("node_count", float("nan"))
+        m["success"] = 1
+    else:
+        m = _make_metrics_nan()
+    row["parallel"] = m
+
+    # ── PSO smoothing on the best successful path ─────────────────────
+    best_path = next((r for r in [p_path, b_path, a_path] if r is not None), None)
+    best_time = next((row[k]["time"] for k in ["parallel", "bidir", "apf"]
+                      if row[k]["success"]), float("nan"))
+    if best_path is not None:
         t0 = time.time()
-        s_path = pso.smooth(a_path)
+        s_path = pso.smooth(best_path)
         s_time = time.time() - t0
-        sm = compute_metrics(s_path, env, a_time + s_time)
-        sm["nodes"] = m["nodes"]
+        sm = compute_metrics(s_path, env, best_time + s_time)
+        sm["nodes"] = float("nan")
         sm["success"] = 1
     else:
-        sm = {k: float("nan") for k in ("length", "smoothness", "efficiency",
-                                         "goal_error", "clearance", "time", "waypoints")}
-        sm["nodes"] = float("nan")
-        sm["success"] = 0
+        sm = _make_metrics_nan()
     row["pso"] = sm
 
     return row
@@ -266,38 +304,37 @@ def run_integration(n_runs: int = 5):
     all_rows = []
     csv_rows = []
 
-    print(f"  Running {n_runs} trials …")
+    print(f"  Running {n_runs} trials  [{_N_WORKERS} parallel workers per portfolio run] …")
     for i in range(n_runs):
         row = _run_once(env, pso)
         all_rows.append(row)
-        v, a, s = row["vanilla"], row["apf"], row["pso"]
-        print(f"  run {i+1:2d} | vanilla: {'OK' if v['success'] else 'FAIL'} "
-              f"len={v['length']:.2f} t={v['time']:.2f}s | "
-              f"apf: {'OK' if a['success'] else 'FAIL'} "
-              f"len={a['length']:.2f} t={a['time']:.2f}s | "
+        v, a, b, p, s = row["vanilla"], row["apf"], row["bidir"], row["parallel"], row["pso"]
+        print(f"  run {i+1:2d} | "
+              f"vanilla: {'OK' if v['success'] else 'FAIL'} t={v['time']:.2f}s | "
+              f"apf: {'OK' if a['success'] else 'FAIL'} t={a['time']:.2f}s | "
+              f"bidir: {'OK' if b['success'] else 'FAIL'} t={b['time']:.2f}s | "
+              f"parallel: {'OK' if p['success'] else 'FAIL'} t={p['time']:.2f}s | "
               f"pso: len={s['length']:.2f}")
         csv_rows.append({
-            "run": i + 1,
-            "vanilla_success":   v["success"],
-            "vanilla_length":    round(v["length"],     4),
-            "vanilla_nodes":     v["nodes"],
-            "vanilla_smoothness":round(v["smoothness"], 4),
-            "vanilla_efficiency":round(v["efficiency"], 4),
-            "vanilla_clearance": round(v["clearance"],  4),
-            "vanilla_time":      round(v["time"],       3),
-            "apf_success":       a["success"],
-            "apf_length":        round(a["length"],     4),
-            "apf_nodes":         a["nodes"],
-            "apf_smoothness":    round(a["smoothness"], 4),
-            "apf_efficiency":    round(a["efficiency"], 4),
-            "apf_clearance":     round(a["clearance"],  4),
-            "apf_time":          round(a["time"],       3),
-            "pso_success":       s["success"],
-            "pso_length":        round(s["length"],     4),
-            "pso_smoothness":    round(s["smoothness"], 4),
-            "pso_efficiency":    round(s["efficiency"], 4),
-            "pso_clearance":     round(s["clearance"],  4),
-            "pso_time":          round(s["time"],       3),
+            "run":                i + 1,
+            "vanilla_success":    v["success"],
+            "vanilla_length":     round(v["length"],     4),
+            "vanilla_nodes":      v["nodes"],
+            "vanilla_time":       round(v["time"],       3),
+            "apf_success":        a["success"],
+            "apf_length":         round(a["length"],     4),
+            "apf_nodes":          a["nodes"],
+            "apf_time":           round(a["time"],       3),
+            "bidir_success":      b["success"],
+            "bidir_length":       round(b["length"],     4),
+            "bidir_nodes":        b["nodes"],
+            "bidir_time":         round(b["time"],       3),
+            "parallel_success":   p["success"],
+            "parallel_length":    round(p["length"],     4),
+            "parallel_time":      round(p["time"],       3),
+            "pso_success":        s["success"],
+            "pso_length":         round(s["length"],     4),
+            "pso_time":           round(s["time"],       3),
         })
 
     # Save CSV
@@ -313,7 +350,7 @@ def run_integration(n_runs: int = 5):
         return _nanmean([r[planner][key] for r in all_rows])
 
     summary = {}
-    for planner in ("vanilla", "apf", "pso"):
+    for planner in ("vanilla", "apf", "bidir", "parallel", "pso"):
         summary[planner] = {
             "length":     avg(planner, "length"),
             "nodes":      avg(planner, "nodes"),
@@ -324,12 +361,14 @@ def run_integration(n_runs: int = 5):
             "success":    _nanmean([r[planner]["success"] for r in all_rows]) * 100,
         }
 
-    print(f"\n  {'Planner':<16} {'success':>8} {'length':>8} {'nodes':>7} "
+    print(f"\n  {'Planner':<18} {'success':>8} {'length':>8} {'nodes':>7} "
           f"{'smooth':>8} {'eff':>6} {'clear':>8} {'time':>7}")
-    print(f"  {'-'*16} {'-'*8} {'-'*8} {'-'*7} {'-'*8} {'-'*6} {'-'*8} {'-'*7}")
-    for label, key in [("Vanilla RRT", "vanilla"), ("APF-RRT", "apf"), ("APF+PSO", "pso")]:
+    print(f"  {'-'*18} {'-'*8} {'-'*8} {'-'*7} {'-'*8} {'-'*6} {'-'*8} {'-'*7}")
+    for label, key in [("Vanilla RRT", "vanilla"), ("APF-RRT", "apf"),
+                       ("Bidir APF-RRT", "bidir"), ("Parallel", "parallel"),
+                       ("APF+PSO", "pso")]:
         s = summary[key]
-        print(f"  {label:<16} {s['success']:>7.0f}% {s['length']:>8.3f} {s['nodes']:>7.0f} "
+        print(f"  {label:<18} {s['success']:>7.0f}% {s['length']:>8.3f} {s['nodes']:>7.0f} "
               f"{s['smoothness']:>8.3f} {s['efficiency']:>6.2f} "
               f"{s['clearance']:>8.3f} {s['time']:>7.2f}s")
 
@@ -342,8 +381,9 @@ def run_integration(n_runs: int = 5):
 
 
 def plot_summary(results, n_runs: int):
-    labels = ["Vanilla RRT", "APF-RRT", "APF-RRT\n+ PSO"]
-    colours = ["#5588cc", "#ee8833", "#55aa55"]
+    labels  = ["Vanilla\nRRT", "APF-RRT", "Bidir\nAPF-RRT", "Parallel\nPortfolio", "APF-RRT\n+PSO"]
+    keys    = ["vanilla",      "apf",     "bidir",           "parallel",            "pso"]
+    colours = ["#5588cc",      "#ee8833", "#cc44aa",         "#cc3333",             "#55aa55"]
 
     metrics = [
         ("success",    "success rate (%)",        ".0f"),
@@ -354,15 +394,15 @@ def plot_summary(results, n_runs: int):
         ("efficiency", "avg path efficiency",     ".2f"),
     ]
 
-    fig, axes = plt.subplots(2, 3, figsize=(14, 8))
+    fig, axes = plt.subplots(2, 3, figsize=(16, 9))
     fig.suptitle(f"Task 2 — APF-Guided RRT Validation ({n_runs} runs, averages)",
                  fontsize=13, fontweight="bold")
 
-    for ax, (key, ylabel, fmt) in zip(axes.flat, metrics):
-        values = [results["vanilla"][key], results["apf"][key], results["pso"][key]]
+    for ax, (metric_key, ylabel, fmt) in zip(axes.flat, metrics):
+        values = [results[k][metric_key] for k in keys]
         valid = [v for v in values if not np.isnan(v)]
         top = max(valid) * 1.30 if valid and max(valid) > 0 else 1.0
-        bars = ax.bar(labels, values, color=colours, width=0.5)
+        bars = ax.bar(labels, values, color=colours, width=0.55)
         ax.set_title(ylabel, fontsize=10)
         ax.set_ylabel(ylabel, fontsize=9)
         ax.set_ylim(0, top)
@@ -370,9 +410,9 @@ def plot_summary(results, n_runs: int):
             label_txt = format(val, fmt) if not np.isnan(val) else "n/a"
             ax.text(bar.get_x() + bar.get_width() / 2,
                     bar.get_height() + top * 0.02,
-                    label_txt, ha="center", va="bottom", fontsize=9)
+                    label_txt, ha="center", va="bottom", fontsize=8)
         ax.grid(axis="y", alpha=0.3)
-        ax.tick_params(axis="x", labelsize=9)
+        ax.tick_params(axis="x", labelsize=8)
 
     plt.tight_layout()
     out_path = RESULTS_DIR / "test_task2_planner.png"
