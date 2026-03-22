@@ -274,13 +274,17 @@ def _run_once(env: RobotEnv, pso: PSOPathSmoother) -> dict:
         m = _make_metrics_nan()
     row["parallel"] = m
 
-    # ── PSO smoothing on the best successful path ─────────────────────
+    # ── Shortcut + PSO smoothing on the best successful path ──────────
     best_path = next((r for r in [p_path, b_path, a_path] if r is not None), None)
     best_time = next((row[k]["time"] for k in ["parallel", "bidir", "apf"]
                       if row[k]["success"]), float("nan"))
     if best_path is not None:
         t0 = time.time()
-        s_path = pso.smooth(best_path)
+        # Greedy shortcutting first: collapses redundant bidir waypoints cheaply,
+        # giving PSO a much shorter starting path to optimise from.
+        sc_planner = RRTPlanner(env, apf=None, max_iter=1)
+        sc_path = sc_planner.shortcut_path(best_path)
+        s_path = pso.smooth(sc_path)
         s_time = time.time() - t0
         sm = compute_metrics(s_path, env, best_time + s_time)
         sm["nodes"] = float("nan")
